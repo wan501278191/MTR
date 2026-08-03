@@ -1,7 +1,37 @@
-numpy
-torch>=1.1
-tensorboardX
-easydict
-pyyaml
-scikit-image
-tqdm
+# MTR 轨迹预测赛事 — Python 依赖
+# Python 3.8 | CUDA 11.8 | PyTorch 2.0.1+cu118
+#
+# 安装顺序（服务器）:
+#   conda create -n mtr python=3.8
+#   conda activate mtr
+#   pip install torch==2.0.1+cu118 torchvision==0.15.2+cu118 --extra-index-url https://download.pytorch.org/whl/cu118
+#   pip install -r requirements.txt
+#   pip install waymo-open-dataset-tf-2-6-0 tensorflow==2.6.0
+#   python setup.py develop
+
+# ── 核心框架 ──────────────────────────────────────
+torch>=1.1              # 实际安装 2.0.1+cu118（见上方安装顺序）
+torchvision             # 实际安装 0.15.2+cu118
+
+# ── 数据处理 ──────────────────────────────────────
+numpy                   # 全局依赖，166 处使用
+easydict                # 配置字典访问（cfg.dataset_cfg.DATA_ROOT）
+pyyaml                  # YAML 配置文件解析
+
+# ── 训练 / 评估 ────────────────────────────────────
+tensorboardX            # TensorBoard 日志记录
+tqdm                    # 进度条
+
+# ── 可视化 ────────────────────────────────────────
+matplotlib              # BEV 静态图（PNG）+ 动图（GIF）
+pillow                  # matplotlib GIF writer 后端
+
+# ── 评估（赛事官方）────────────────────────────────
+# 以下需单独安装，不放入 requirements.txt（避免本地 CPU 安装失败）
+#   pip install waymo-open-dataset-tf-2-6-0
+#   pip install tensorflow==2.6.0
+# 原因: 绑定 Python 3.8 + CUDA，本地 macOS 无需安装
+
+# ── 可选（仅 visualize_waymax.py 需要）──────────────
+# jax                    # waymax 依赖
+# waymax                 # pip install waymax（Waymax 风格可视化，非必需）
