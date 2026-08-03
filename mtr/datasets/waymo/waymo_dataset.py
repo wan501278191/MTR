@@ -79,7 +79,8 @@ class WaymoDataset(DatasetTemplate):
         """
         info = self.infos[index]
         scene_id = info['scenario_id']
-        with open(self.data_path / f'sample_{scene_id}.pkl', 'rb') as f:
+        file_prefix = self.dataset_cfg.get('DATA_FILE_PREFIX', 'sample_')
+        with open(self.data_path / f'{file_prefix}{scene_id}.pkl', 'rb') as f:
             info = pickle.load(f)
 
         sdc_track_index = info['sdc_track_index']
@@ -94,6 +95,11 @@ class WaymoDataset(DatasetTemplate):
         obj_trajs_full = track_infos['trajs']  # (num_objects, num_timestamp, 10)
         obj_trajs_past = obj_trajs_full[:, :current_time_index + 1]
         obj_trajs_future = obj_trajs_full[:, current_time_index + 1:]
+
+        if self.training and self.dataset_cfg.get('DATA_AUGMENTATION', False):
+            obj_trajs_full, info['map_infos'] = self.apply_data_augmentation(obj_trajs_full, info['map_infos'])
+            obj_trajs_past = obj_trajs_full[:, :current_time_index + 1]
+            obj_trajs_future = obj_trajs_full[:, current_time_index + 1:]
 
         center_objects, track_index_to_predict = self.get_interested_agents(
             track_index_to_predict=track_index_to_predict,
@@ -199,6 +205,46 @@ class WaymoDataset(DatasetTemplate):
         return (obj_trajs_data, obj_trajs_mask > 0, obj_trajs_pos, obj_trajs_last_pos,
             obj_trajs_future_state, obj_trajs_future_mask, center_gt_trajs, center_gt_trajs_mask, center_gt_final_valid_idx,
             track_index_to_predict_new, sdc_track_index_new, obj_types, obj_ids)
+
+    def apply_data_augmentation(self, obj_trajs_full, map_infos):
+        """Apply random rotation and horizontal flip to world coordinates.
+
+        Args:
+            obj_trajs_full (np.ndarray): (num_objects, num_timestamps, 10) [x, y, z, l, w, h, heading, vx, vy, valid]
+            map_infos (dict): contains 'all_polylines' (num_points, 7) [x, y, z, dx, dy, dz, type]
+
+        Returns:
+            augmented obj_trajs_full, map_infos
+        """
+        angle = np.random.uniform(-np.pi, np.pi)
+        cos_a, sin_a = np.cos(angle), np.sin(angle)
+        rot_matrix = np.array([[cos_a, -sin_a], [sin_a, cos_a]], dtype=np.float32)
+
+        # Rotate agent positions (x, y)
+        obj_trajs_full[..., 0:2] = obj_trajs_full[..., 0:2] @ rot_matrix.T
+        # Update heading
+        obj_trajs_full[..., 6] = obj_trajs_full[..., 6] + angle
+        # Rotate velocity (vx, vy)
+        obj_trajs_full[..., 7:9] = obj_trajs_full[..., 7:9] @ rot_matrix.T
+
+        # Rotate map polylines
+        all_polylines = map_infos['all_polylines']
+        all_polylines[:, 0:2] = all_polylines[:, 0:2] @ rot_matrix.T
+        all_polylines[:, 3:5] = all_polylines[:, 3:5] @ rot_matrix.T
+        map_infos['all_polylines'] = all_polylines
+
+        # Random horizontal flip (negate y)
+        if np.random.rand() > 0.5:
+            obj_trajs_full[..., 1] *= -1  # y
+            obj_trajs_full[..., 3] *= -1  # dy
+            obj_trajs_full[..., 6] = np.pi - obj_trajs_full[..., 6]  # heading
+            obj_trajs_full[..., 8] *= -1  # vy
+
+            all_polylines[:, 1] *= -1  # y
+            all_polylines[:, 4] *= -1  # dir_y
+            map_infos['all_polylines'] = all_polylines
+
+        return obj_trajs_full, map_infos
 
     def get_interested_agents(self, track_index_to_predict, obj_trajs_full, current_time_index, obj_types, scene_id):
         center_objects_list = []
@@ -514,6 +560,23 @@ class WaymoDataset(DatasetTemplate):
 
     def evaluation(self, pred_dicts, output_path=None, eval_method='waymo', **kwargs):
         if eval_method == 'waymo':
+            # Check if TensorFlow can be safely imported (it segfaults on some macOS setups)
+            import subprocess, sys
+            try:
+                result = subprocess.run(
+                    [sys.executable, '-c', 'import tensorflow'],
+                    capture_output=True, timeout=30
+                )
+                tf_available = (result.returncode == 0)
+            except Exception:
+                tf_available = False
+
+            if not tf_available:
+                self.logger.warning('TensorFlow unavailable (or crashes), skipping full Waymo evaluation. Use eval_scripts/eval_gt_and_pred.py on server.')
+                metric_result_str = '\n[Local] TensorFlow unavailable -- full Waymo evaluation skipped.\n'
+                metric_results = {'mAP': 0.0, 'miss_rate': 0.0}
+                return metric_result_str, metric_results
+
             from .waymo_eval import waymo_evaluation
             try:
                 num_modes_for_eval = pred_dicts[0][0]['pred_trajs'].shape[0]

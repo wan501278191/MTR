@@ -65,7 +65,7 @@ def eval_single_ckpt(model, test_loader, args, eval_output_dir, logger, epoch_id
         it, epoch = model.load_params_from_file(filename=args.ckpt, logger=logger, to_cpu=dist_test)
     else:
         it, epoch = -1, -1
-    model.cuda()
+    model = model.to(torch.device('cuda' if torch.cuda.is_available() else 'cpu'))
 
     logger.info(f'*************** LOAD MODEL (epoch={epoch}, iter={it}) for EVALUATION *****************')
     # start evaluation
@@ -94,9 +94,9 @@ def get_no_evaluated_ckpt(ckpt_dir, ckpt_record_file, args):
 
 
 def repeat_eval_ckpt(model, test_loader, args, eval_output_dir, logger, ckpt_dir, dist_test=False):
-    # evaluated ckpt record
+    # evaluated ckpt record — truncate to remove stale records from previous runs
     ckpt_record_file = eval_output_dir / ('eval_list_val.txt')
-    with open(ckpt_record_file, 'a'):
+    with open(ckpt_record_file, 'w'):
         pass
 
     # tensorboard log
@@ -109,6 +109,16 @@ def repeat_eval_ckpt(model, test_loader, args, eval_output_dir, logger, ckpt_dir
         # check whether there is checkpoint which is not evaluated
         cur_epoch_id, cur_ckpt = get_no_evaluated_ckpt(ckpt_dir, ckpt_record_file, args)
         if cur_epoch_id == -1 or int(float(cur_epoch_id)) < args.start_epoch:
+            # If max_waiting_mins is 0 or all ckpts evaluated, exit immediately
+            if args.max_waiting_mins == 0:
+                if first_eval:
+                    logger.info('No checkpoint found to evaluate and max_waiting_mins=0, exiting repeat_eval_ckpt.')
+                else:
+                    logger.info('All checkpoints have been evaluated. Exiting repeat_eval_ckpt.')
+                if cfg.LOCAL_RANK == 0:
+                    tb_log.close()
+                break
+
             wait_second = 30
             if cfg.LOCAL_RANK == 0:
                 print('Wait %s seconds for next check (progress: %.1f / %d minutes): %s \r'
@@ -116,6 +126,8 @@ def repeat_eval_ckpt(model, test_loader, args, eval_output_dir, logger, ckpt_dir
             time.sleep(wait_second)
             total_time += 30
             if total_time > args.max_waiting_mins * 60 and (first_eval is False):
+                if cfg.LOCAL_RANK == 0:
+                    tb_log.close()
                 break
             continue
 
@@ -124,7 +136,7 @@ def repeat_eval_ckpt(model, test_loader, args, eval_output_dir, logger, ckpt_dir
 
         it, epoch = model.load_params_from_file(filename=cur_ckpt, logger=logger, to_cpu=dist_test)
         logger.info(f'*************** LOAD MODEL (epoch={epoch}, iter={it}) for EVALUATION *****************')
-        model.cuda()
+        model = model.to(torch.device('cuda' if torch.cuda.is_available() else 'cpu'))
 
         # start evaluation
         cur_result_dir = eval_output_dir / ('epoch_%s' % cur_epoch_id)

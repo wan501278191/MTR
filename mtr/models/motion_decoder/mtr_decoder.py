@@ -19,6 +19,7 @@ from mtr.config import cfg
 
 class MTRDecoder(nn.Module):
     def __init__(self, in_channels, config):
+        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         super().__init__()
         self.model_cfg = config
         self.object_type = self.model_cfg.OBJECT_TYPE
@@ -123,7 +124,7 @@ class MTRDecoder(nn.Module):
             intention_points = {}
             for cur_type in self.object_type:
                 cur_intention_points = intention_points_dict[cur_type]
-                cur_intention_points = torch.from_numpy(cur_intention_points).float().view(-1, 2).cuda()
+                cur_intention_points = torch.from_numpy(cur_intention_points).float().view(-1, 2).to(self.device)
                 intention_points[cur_type] = cur_intention_points
 
             intention_query_mlps = common_layers.build_mlps(
@@ -367,8 +368,8 @@ class MTRDecoder(nn.Module):
         return pred_list
 
     def get_decoder_loss(self, tb_pre_tag=''):
-        center_gt_trajs = self.forward_ret_dict['center_gt_trajs'].cuda()
-        center_gt_trajs_mask = self.forward_ret_dict['center_gt_trajs_mask'].cuda()
+        center_gt_trajs = self.forward_ret_dict['center_gt_trajs'].to(self.device)
+        center_gt_trajs_mask = self.forward_ret_dict['center_gt_trajs_mask'].to(self.device)
         center_gt_final_valid_idx = self.forward_ret_dict['center_gt_final_valid_idx'].long()
         assert center_gt_trajs.shape[-1] == 4
 
@@ -437,8 +438,8 @@ class MTRDecoder(nn.Module):
         return total_loss, tb_dict, disp_dict
 
     def get_dense_future_prediction_loss(self, tb_pre_tag='', tb_dict=None, disp_dict=None):
-        obj_trajs_future_state = self.forward_ret_dict['obj_trajs_future_state'].cuda()
-        obj_trajs_future_mask = self.forward_ret_dict['obj_trajs_future_mask'].cuda()
+        obj_trajs_future_state = self.forward_ret_dict['obj_trajs_future_state'].to(self.device)
+        obj_trajs_future_mask = self.forward_ret_dict['obj_trajs_future_mask'].to(self.device)
         pred_dense_trajs = self.forward_ret_dict['pred_dense_trajs']  # (num_center_objects, num_objects, num_future_frames, 7)
         assert pred_dense_trajs.shape[-1] == 7
         assert obj_trajs_future_state.shape[-1] == 4
@@ -452,7 +453,7 @@ class MTRDecoder(nn.Module):
         fake_scores = pred_dense_trajs.new_zeros((num_center_objects, num_objects)).view(-1, 1)  # (num_center_objects * num_objects, 1)
 
         temp_pred_trajs = pred_dense_trajs_gmm.contiguous().view(num_center_objects * num_objects, 1, num_timestamps, 5)
-        temp_gt_idx = torch.zeros(num_center_objects * num_objects).cuda().long()  # (num_center_objects * num_objects)
+        temp_gt_idx = torch.zeros(num_center_objects * num_objects, device=self.device).long()  # (num_center_objects * num_objects)
         temp_gt_trajs = obj_trajs_future_state[:, :, :, 0:2].contiguous().view(num_center_objects * num_objects, num_timestamps, 2)
         temp_gt_trajs_mask = obj_trajs_future_mask.view(num_center_objects * num_objects, num_timestamps)
         loss_reg_gmm, _ = loss_utils.nll_loss_gmm_direct(
@@ -502,6 +503,9 @@ class MTRDecoder(nn.Module):
         else:
             pred_trajs_final = pred_trajs
             pred_scores_final = pred_scores
+
+        # Re-normalize scores over selected modes so they sum to 1
+        pred_scores_final = pred_scores_final / (pred_scores_final.sum(dim=-1, keepdim=True) + 1e-8)
 
         return pred_scores_final, pred_trajs_final
 

@@ -168,7 +168,7 @@ def main():
     model = model_utils.MotionTransformer(config=cfg.MODEL)
     if not args.without_sync_bn:
         model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
-    model.cuda()
+    model = model.to(torch.device('cuda' if torch.cuda.is_available() else 'cpu'))
 
     optimizer = build_optimizer(model, cfg.OPTIMIZATION)
 
@@ -277,6 +277,10 @@ def main():
 
     logger.info('**********************End evaluation %s/%s(%s)**********************' %
                 (cfg.EXP_GROUP_PATH, cfg.TAG, args.extra_tag))
+
+    # Close tensorboard writers cleanly to avoid RuntimeError at interpreter shutdown
+    if tb_log is not None:
+        tb_log.close()
 
 
 if __name__ == '__main__':
