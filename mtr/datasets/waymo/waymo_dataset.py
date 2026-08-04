@@ -582,14 +582,39 @@ class WaymoDataset(DatasetTemplate):
                 num_modes_for_eval = pred_dicts[0][0]['pred_trajs'].shape[0]
             except:
                 num_modes_for_eval = 6
-            metric_results, result_format_str = waymo_evaluation(pred_dicts=pred_dicts, num_modes_for_eval=num_modes_for_eval)
 
-            metric_result_str = '\n'
-            for key in metric_results:
-                metric_results[key] = metric_results[key]
-                metric_result_str += '%s: %.4f \n' % (key, metric_results[key])
-            metric_result_str += '\n'
-            metric_result_str += result_format_str
+            # Evaluate 3s / 5s / 8s (赛事要求三个时间点)
+            metric_results = {}
+            metric_result_str = ''
+            for eval_second in [3, 5, 8]:
+                cur_results, cur_format_str = waymo_evaluation(
+                    pred_dicts=pred_dicts,
+                    num_modes_for_eval=num_modes_for_eval,
+                    eval_second=eval_second,
+                )
+                # Prefix keys with time window and merge into final dict
+                for key, val in cur_results.items():
+                    if isinstance(val, (int, float)) and '---' not in key and 'Note that' not in key and 'TYPE_' not in key:
+                        prefixed_key = f'{eval_second}s_{key}'
+                        metric_results[prefixed_key] = val
+
+                # Print aggregated metrics for this time window
+                metric_result_str += f'\n========== Evaluation @ {eval_second}s ==========\n'
+                for key in cur_results:
+                    val = cur_results[key]
+                    if not isinstance(val, (int, float)):
+                        continue
+                    if '---' in key or 'Note that' in key:
+                        continue
+                    if 'TYPE_' in key:
+                        continue
+                    metric_result_str += '%s: %.4f \n' % (key, val)
+                metric_result_str += cur_format_str + '\n'
+
+            # Also keep un-prefixed keys for backward compatibility (8s as default)
+            for key, val in list(metric_results.items()):
+                if key.startswith('8s_'):
+                    metric_results[key[3:]] = val
         else:
             raise NotImplementedError
 
