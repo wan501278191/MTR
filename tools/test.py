@@ -14,7 +14,7 @@ from pathlib import Path
 
 import numpy as np
 import torch
-from tensorboardX import SummaryWriter
+from mtr.utils.swanlab_logger import SwanLabWriter
 
 from eval_utils import eval_utils
 from mtr.config import cfg, cfg_from_list, cfg_from_yaml_file, log_config_to_file
@@ -101,7 +101,7 @@ def repeat_eval_ckpt(model, test_loader, args, eval_output_dir, logger, ckpt_dir
 
     # tensorboard log
     if cfg.LOCAL_RANK == 0:
-        tb_log = SummaryWriter(log_dir=str(eval_output_dir / 'tensorboard_val'))
+        tb_log = SwanLabWriter(project='MTR', name=args.extra_tag + '_eval', log_dir=str(eval_output_dir / 'swanlab_val'))
     total_time = 0
     first_eval = True
 

@@ -25,6 +25,7 @@ tqdm                    # 进度条
 # ── 可视化 ────────────────────────────────────────
 matplotlib              # BEV 静态图（PNG）+ 动图（GIF）
 pillow                  # matplotlib GIF writer 后端
+swanlab                 # 训练日志可视化（替代 tensorboard）
 
 # ── 评估（赛事官方）────────────────────────────────
 # 以下需单独安装，不放入 requirements.txt（避免本地 CPU 安装失败）

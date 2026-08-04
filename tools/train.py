@@ -14,7 +14,7 @@ import math
 import torch
 import torch.nn as nn
 import torch.optim.lr_scheduler as lr_sched
-from tensorboardX import SummaryWriter
+from mtr.utils.swanlab_logger import SwanLabWriter
 
 from mtr.datasets import build_dataloader
 from mtr.config import cfg, cfg_from_list, cfg_from_yaml_file, log_config_to_file
@@ -152,7 +152,7 @@ def main():
     log_config_to_file(cfg, logger=logger)
     if cfg.LOCAL_RANK == 0:
         os.system('cp %s %s' % (args.cfg_file, output_dir))
-    tb_log = SummaryWriter(log_dir=str(output_dir / 'tensorboard')) if cfg.LOCAL_RANK == 0 else None
+    tb_log = SwanLabWriter(project='MTR', name=args.extra_tag, log_dir=str(output_dir / 'swanlab')) if cfg.LOCAL_RANK == 0 else None
 
     train_set, train_loader, train_sampler = build_dataloader(
         dataset_cfg=cfg.DATA_CONFIG,
