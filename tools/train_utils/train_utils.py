@@ -82,14 +82,34 @@ def train_one_epoch(model, optimizer, train_loader, accumulated_iter, optim_cfg,
                             f'{disp_str}')
 
             if tb_log is not None:
-                tb_log.add_scalar('meta_data/learning_rate', cur_lr, accumulated_iter)
-                for key, val in tb_dict.items():
-                    tb_log.add_scalar('train/' + key, val, accumulated_iter)
-                tb_log.add_scalar('train/total_norm', total_norm, accumulated_iter)
+                # === 1. 模型指标 (model.*) — 总览优先 ===
+                tb_log.add_scalar('model.loss', loss.item(), accumulated_iter)
+                tb_log.add_scalar('model.learning_rate', cur_lr, accumulated_iter)
+                tb_log.add_scalar('model.loss_dense_prediction', tb_dict.get('loss_dense_prediction', 0.0), accumulated_iter)
+                # 逐层 loss（先总 loss，再分项）
+                for layer_idx in range(6):
+                    for sub_tag in [f'loss_layer{layer_idx}', f'loss_layer{layer_idx}_reg_gmm',
+                                    f'loss_layer{layer_idx}_reg_vel', f'loss_layer{layer_idx}_cls']:
+                        if sub_tag in tb_dict:
+                            tb_log.add_scalar(f'model.{sub_tag}', tb_dict[sub_tag], accumulated_iter)
+
+                # === 2. 训练过程 (train.*) — 总览优先 ===
+                tb_log.add_scalar('train.total_norm', total_norm, accumulated_iter)
+                # ADE 按类别 + 平均
+                ade_vals = []
+                for obj_type in ['TYPE_VEHICLE', 'TYPE_PEDESTRIAN', 'TYPE_CYCLIST']:
+                    ade_key = f'ade_{obj_type}_layer_5'
+                    if ade_key in tb_dict:
+                        ade_val = tb_dict[ade_key]
+                        ade_vals.append(ade_val)
+                        tb_log.add_scalar(f'train.ade_{obj_type}', ade_val, accumulated_iter)
+                if ade_vals:
+                    tb_log.add_scalar('train.ade_avg', sum(ade_vals) / len(ade_vals), accumulated_iter)
+
                 if show_grad_curve:
                     for key, val in model.named_parameters():
                         key = key.replace('.', '/')
-                        tb_log.add_scalar('train_grad/' + key, val.grad.abs().max().item(), accumulated_iter)
+                        tb_log.add_scalar('model.grad_' + key, val.grad.abs().max().item(), accumulated_iter)
 
             time_past_this_epoch = pbar.format_dict['elapsed']
             if time_past_this_epoch // ckpt_save_time_interval >= ckpt_save_cnt:
@@ -181,8 +201,40 @@ def train_model(model, optimizer, train_loader, optim_cfg,
                     result_dir=eval_output_dir, save_to_file=False, logger_iter_interval=max(logger_iter_interval // 5, 1)
                 )
                 if cfg.LOCAL_RANK == 0:
-                    for key, val in tb_dict.items():
-                        tb_log.add_scalar('eval/' + key, val, trained_epoch)
+                    # === 3. 评估结果 (eval.*) — 所有时间点总览优先，再分时间点细项 ===
+                    ordered_keys = []
+                    # Phase 1: all avg summaries first (3s/5s/8s × 4 metrics = 16 keys)
+                    for es in ['3s', '5s', '8s']:
+                        for metric in ['mAP', 'minADE', 'minFDE', 'MissRate']:
+                            k = f'{es}_{metric}'
+                            if k in tb_dict:
+                                ordered_keys.append(k)
+                    # Phase 2: per-time-window per-type breakdown
+                    for es in ['3s', '5s', '8s']:
+                        for metric in ['mAP', 'minADE', 'minFDE', 'MissRate']:
+                            for obj_type in ['VEHICLE', 'PEDESTRIAN', 'CYCLIST']:
+                                k = f'{es}_{metric} - {obj_type}'
+                                if k in tb_dict:
+                                    ordered_keys.append(k)
+                    # Phase 3: backward-compat un-prefixed (8s default)
+                    for key in tb_dict:
+                        if key not in ordered_keys and isinstance(tb_dict[key], (int, float)):
+                            ordered_keys.append(key)
+
+                    for key in ordered_keys:
+                        val = tb_dict[key]
+                        # Build clean SwanLab tag: eval.3s.mAP, eval.3s.mAP_VEHICLE, etc.
+                        if key[:3] in ['3s_', '5s_', '8s_']:
+                            prefix = key[:2]  # '3s'
+                            rest = key[3:]    # 'mAP - VEHICLE' or 'mAP'
+                            rest = rest.replace(' - ', '_').replace(' ', '')
+                            tag = f'eval.{prefix}.{rest}'
+                        elif ' - ' in key:
+                            rest = key.replace(' - ', '_').replace(' ', '')
+                            tag = f'eval.{rest}'
+                        else:
+                            tag = f'eval.{key}'
+                        tb_log.add_scalar(tag, val, trained_epoch)
 
                     if 'mAP' in tb_dict:
                         best_record_file = eval_output_dir / ('best_eval_record.txt')
