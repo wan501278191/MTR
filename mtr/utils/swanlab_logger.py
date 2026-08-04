@@ -14,7 +14,7 @@ class SwanLabWriter:
     def __init__(self, project='MTR', name=None, log_dir=None, config=None, **kwargs):
         import swanlab
         self._swanlab = swanlab
-        self._step_offset = {}
+        self._global_step = 0
         self._initialized = False
         self._init_kwargs = dict(
             project=project,
@@ -34,17 +34,21 @@ class SwanLabWriter:
 
     def add_scalar(self, tag, value, step=None):
         tag = tag.replace('/', '.')
-        if step is None:
-            step = self._step_offset.get(tag, 0)
-            self._step_offset[tag] = step + 1
-        self._swanlab.log({tag: float(value)}, step=step)
+
+        # Skip non-metric keys from Waymo eval (separators, breakdown names, etc.)
+        if not self._is_valid_metric_tag(tag):
+            return
+
+        # SwanLab requires step to be monotonically increasing.
+        # Use a global counter instead of the caller-provided step
+        # to avoid conflicts between train (accumulated_iter) and eval (epoch) steps.
+        self._global_step += 1
+        self._swanlab.log({tag: float(value)}, step=self._global_step)
 
     def add_text(self, tag, text, step=None):
         tag = tag.replace('/', '.')
-        if step is None:
-            step = self._step_offset.get(tag, 0)
-            self._step_offset[tag] = step + 1
-        self._swanlab.log({tag: self._swanlab.Text(text)}, step=step)
+        self._global_step += 1
+        self._swanlab.log({tag: self._swanlab.Text(text)}, step=self._global_step)
 
     def flush(self):
         pass
@@ -53,3 +57,19 @@ class SwanLabWriter:
         if self._initialized:
             self._swanlab.finish()
             self._initialized = False
+
+    @staticmethod
+    def _is_valid_metric_tag(tag):
+        """Filter out Waymo eval keys that are not useful as SwanLab metrics."""
+        # Skip separator lines
+        if '---' in tag or 'Note that' in tag:
+            return False
+        # Skip breakdown-level keys like 'minFDE - TYPE_CYCLIST_15'
+        # (keep only aggregated keys like 'minFDE - VEHICLE', 'minFDE - PEDESTRIAN', 'minFDE - CYCLIST', 'mAP', etc.)
+        if '_' in tag and any(t in tag for t in ['TYPE_VEHICLE', 'TYPE_PEDESTRIAN', 'TYPE_CYCLIST']):
+            return False
+        # Skip keys with numeric suffixes (breakdown names)
+        parts = tag.split()
+        if len(parts) >= 2 and parts[-1].isdigit():
+            return False
+        return True
