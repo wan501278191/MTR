@@ -8,6 +8,6 @@ output/
 data/
 **egg-info**
 *.pdf
-*.yaml
+#*.yaml
 *.png
 *.html
