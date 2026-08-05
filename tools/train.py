@@ -90,12 +90,24 @@ def build_scheduler(optimizer, dataloader, opt_cfg, total_epochs, total_iters_ea
         return max(cur_decay, opt_cfg.LR_CLIP / opt_cfg.LR)
 
     if opt_cfg.get('SCHEDULER', None) == 'cosine':
-        scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
+        total_iters = total_iters_each_epoch * total_epochs
+        warmup_iters = min(500, total_iters // 10)  # 500 iter warmup or 10% of total
+        scheduler = torch.optim.lr_scheduler.SequentialLR(
             optimizer,
-            T_0=2 * len(dataloader),
-            T_mult=1,
-            eta_min=max(1e-2 * opt_cfg.LR, 1e-6),
-            last_epoch=-1,
+            schedulers=[
+                torch.optim.lr_scheduler.LinearLR(
+                    optimizer,
+                    start_factor=0.01,        # start at 1% of LR (1e-6)
+                    end_factor=1.0,             # ramp up to full LR (1e-4)
+                    total_iters=warmup_iters,
+                ),
+                torch.optim.lr_scheduler.CosineAnnealingLR(
+                    optimizer,
+                    T_max=total_iters - warmup_iters,
+                    eta_min=opt_cfg.LR_CLIP,
+                ),
+            ],
+            milestones=[warmup_iters],
         )
     elif opt_cfg.get('SCHEDULER', None) == 'lambdaLR':
         scheduler = lr_sched.LambdaLR(optimizer, lr_lbmd, last_epoch=last_epoch)

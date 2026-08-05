@@ -223,17 +223,23 @@ def train_model(model, optimizer, train_loader, optim_cfg,
 
                     for key in ordered_keys:
                         val = tb_dict[key]
-                        # Build clean SwanLab tag: eval.3s.mAP, eval.3s.mAP_VEHICLE, etc.
+                        # Build SwanLab tag with '/' group separator.
+                        # Avg metrics get '0_summary/' subgroup to sort before per-type metrics.
                         if key[:3] in ['3s_', '5s_', '8s_']:
-                            prefix = key[:2]  # '3s'
-                            rest = key[3:]    # 'mAP - VEHICLE' or 'mAP'
+                            prefix = key[:2]  # '3s', '5s', '8s'
+                            rest = key[3:]     # 'mAP' or 'mAP - VEHICLE'
                             rest = rest.replace(' - ', '_').replace(' ', '')
-                            tag = f'eval.{prefix}.{rest}'
+                            if not any(t in rest for t in ['_VEHICLE', '_PEDESTRIAN', '_CYCLIST']):
+                                # Avg summary: eval/0_summary/3s.mAP, eval/0_summary/5s.mAP, etc.
+                                tag = f'eval/0_summary/{prefix}.{rest}'
+                            else:
+                                # Per-type: eval/3s.mAP_VEHICLE, eval/5s.minADE_PEDESTRIAN, etc.
+                                tag = f'eval/{prefix}.{rest}'
                         elif ' - ' in key:
                             rest = key.replace(' - ', '_').replace(' ', '')
-                            tag = f'eval.{rest}'
+                            tag = f'eval/{rest}'
                         else:
-                            tag = f'eval.{key}'
+                            tag = f'eval/{key}'
                         tb_log.add_scalar(tag, val, trained_epoch)
 
                     if 'mAP' in tb_dict:
