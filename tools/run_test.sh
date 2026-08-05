@@ -18,8 +18,8 @@ TEST_INFO_FILE="processed_scenarios_testA_full_infos.pkl"
 # ===========================================================
 
 # 命令行参数（可覆盖默认值）
-SCENARIO_ID="${1:-enc_00ab2662a208ecc4a140e9a9}"
-OBJECT_INDEX="${2:-0}"
+SCENARIO_ID="${1:-}"  # 指定场景ID则只可视化该场景，留空则可视化全部
+OBJECT_INDEX="${2:-0}"   # 指定场景的对象索引（仅在指定场景时生效）
 FUTURE_SECONDS="${3:-8.0}"
 
 # ---- 从 CFG_FILE / EXTRA_TAG / TEST_TAG 推导所有路径 ----
@@ -84,7 +84,6 @@ if [ -z "$RESULT_PKL" ]; then
         --extra_tag "$EXTRA_TAG" \
         --ckpt "$CKPT" \
         --test_tag "$TEST_TAG" \
-        --scenario_id "$SCENARIO_ID" \
         ${TEST_SPLIT_DIR:+--test_split_dir "$TEST_SPLIT_DIR"} \
         ${TEST_INFO_FILE:+--test_info_file "$TEST_INFO_FILE"} \
         --max_waiting_mins 0
@@ -111,13 +110,20 @@ else
     echo "========== 1. 跳过推理（已有 result.pkl） =========="
 fi
 
+# 可视化模式：指定场景 → 只可视化该场景；未指定 → 可视化全部
+VIS_ARGS=""
+if [ -n "$SCENARIO_ID" ]; then
+    VIS_ARGS="--scenario_id $SCENARIO_ID --object_index $OBJECT_INDEX"
+else
+    VIS_ARGS="--all"
+fi
+
 echo ""
 echo "========== 2. 生成静态可视化 PNG =========="
 python visualize_prediction.py \
     --result_pkl "$RESULT_PKL" \
     --data_dir "$DATA_DIR" \
-    --scenario_id "$SCENARIO_ID" \
-    --object_index "$OBJECT_INDEX" \
+    $VIS_ARGS \
     --output_dir "$OUTPUT_DIR"
 
 echo ""
@@ -125,8 +131,7 @@ echo "========== 3. 生成未来 ${FUTURE_SECONDS}s 动图 GIF =========="
 python visualize_animation.py \
     --result_pkl "$RESULT_PKL" \
     --data_dir "$DATA_DIR" \
-    --scenario_id "$SCENARIO_ID" \
-    --object_index "$OBJECT_INDEX" \
+    $VIS_ARGS \
     --output_dir "$OUTPUT_DIR" \
     --fps 10 \
     --margin 50 \

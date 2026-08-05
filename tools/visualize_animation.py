@@ -61,6 +61,8 @@ def parse_args():
     parser.add_argument('--speed', type=float, default=1.0, help='Playback speed multiplier')
     parser.add_argument('--future_seconds', type=float, default=8.0,
                         help='How many future seconds to animate (max 8.0s, default: 8.0)')
+    parser.add_argument('--all', action='store_true', default=False,
+                        help='Animate all scenarios in result.pkl')
     return parser.parse_args()
 
 
@@ -124,58 +126,35 @@ def plot_map(ax, groups):
                         lw=style['lw'], alpha=style['alpha'], zorder=1)
 
 
-def main():
-    args = parse_args()
-
-    # ── Determine number of future frames to animate ─────────────────────
-    future_frames = min(int(args.future_seconds / DT), MAX_FUTURE_LEN)
-    future_frames = max(future_frames, 1)
-    actual_future_seconds = future_frames * DT
-
-    # ── Load result.pkl ──────────────────────────────────────────────────
-    with open(args.result_pkl, 'rb') as f:
-        all_preds = pickle.load(f)
-
-    # Find the target scenario
-    target_sid = args.scenario_id
+def animate_single(args, all_preds, future_frames, actual_future_seconds,
+                  scenario_id, object_index):
+    """Animate a single scenario + object."""
     found = None
     for scene_preds in all_preds:
         if len(scene_preds) == 0:
             continue
         sid = scene_preds[0]['scenario_id']
-        if target_sid is None or sid == target_sid:
-            if args.object_index < len(scene_preds):
-                found = scene_preds[args.object_index]
+        if sid == scenario_id:
+            if object_index < len(scene_preds):
+                found = scene_preds[object_index]
                 break
 
     if found is None:
-        print(f'ERROR: scenario_id={target_sid}, object_index={args.object_index} not found in result.pkl')
-        print(f'Available scenarios: {[scene[0]["scenario_id"] for scene in all_preds if len(scene) > 0][:5]}...')
-        return
+        print(f'ERROR: scenario_id={scenario_id}, object_index={object_index} not found')
+        return False
 
-    scenario_id = found['scenario_id']
     object_id = found['object_id']
     object_type = found['object_type']
-    pred_trajs = found['pred_trajs']     # (6, 80, 2)
-    pred_scores = found['pred_scores']   # (6,)
-    gt_trajs = found['gt_trajs']          # (91, 10)
+    pred_trajs = found['pred_trajs']
+    pred_scores = found['pred_scores']
+    gt_trajs = found['gt_trajs']
 
-    print(f'Scenario: {scenario_id}')
-    print(f'Object: id={object_id}, type={object_type}')
-    print(f'pred_trajs: {pred_trajs.shape}, pred_scores: {pred_scores.shape}')
-    print(f'pred_scores: {pred_scores}, sum={pred_scores.sum():.4f}')
-
-    # Check if scores are uniform
     scores_uniform = pred_scores.std() < 0.001
-    if scores_uniform:
-        print('WARNING: All confidence scores are nearly identical (model undertrained).')
 
-    # ── Load scene data for map ──────────────────────────────────────────
     scene_file = find_scene_file(args.data_dir, scenario_id)
     if scene_file is None:
         print(f'ERROR: scene file not found for {scenario_id} in {args.data_dir}')
-        return
-    print(f'Loading scene: {scene_file}')
+        return False
 
     with open(scene_file, 'rb') as f:
         scene_data = pickle.load(f)
@@ -183,32 +162,26 @@ def main():
     all_polylines = scene_data['map_infos']['all_polylines']
     current_time_index = scene_data.get('current_time_index', 10)
 
-    # Split GT
     valid_mask = gt_trajs[:, -1] > 0.5
     hist_xy = gt_trajs[:current_time_index + 1, :2]
     future_xy = gt_trajs[current_time_index + 1:, :2]
     future_valid = valid_mask[current_time_index + 1:]
 
-    # ── Setup figure ─────────────────────────────────────────────────────
     fig, ax = plt.subplots(1, 1, figsize=(10, 10))
     groups = group_polylines_by_type(all_polylines)
 
-    # Compute view bounds around agent
     center = hist_xy[-1] if len(hist_xy) > 0 else np.zeros(2)
     margin = args.margin
     xlim = (center[0] - margin, center[0] + margin)
     ylim = (center[1] - margin, center[1] + margin)
 
-    # Sort modes by score (best first)
     mode_order = np.argsort(-pred_scores)
 
-    # Distinct colors + line styles for each mode
     mode_colors = ['#e41a1c', '#377eb8', '#4daf4a', '#984ea3', '#ff7f00', '#a65628']
     mode_styles = ['-', '--', '-.', ':', '-', '--']
     mode_widths = [2.5, 1.8, 1.5, 1.2, 1.0, 0.8]
 
     if scores_uniform:
-        # When scores are uniform, use rank-based opacity
         scores_norm = np.array([1.0, 0.7, 0.5, 0.35, 0.25, 0.15])
     else:
         scores_norm = pred_scores / (pred_scores.max() + 1e-8)
@@ -217,45 +190,30 @@ def main():
 
     def update(frame):
         ax.clear()
-
-        # Map (static)
         plot_map(ax, groups)
-
-        # History trajectory (blue)
         if len(hist_xy) >= 2:
             ax.plot(hist_xy[:, 0], hist_xy[:, 1], '-', color='blue',
                     linewidth=2.5, zorder=10, label='History')
-
-        # Current agent position at this frame
         if frame == 0:
             cur_pos = hist_xy[-1]
         else:
             best_mode = mode_order[0]
             cur_pos = pred_trajs[best_mode][min(frame - 1, MAX_FUTURE_LEN - 1)]
-
         ax.scatter(cur_pos[0], cur_pos[1], c='red', s=100, zorder=15,
                    edgecolors='white', linewidths=1.5, marker='*')
-
-        # Predicted trajectories — draw up to current frame
         for rank, mode_idx in enumerate(mode_order):
             traj = pred_trajs[mode_idx]
             n_pts = min(frame + 1, total_frames)
             seg = traj[:n_pts]
-
             alpha = 0.3 + 0.7 * scores_norm[rank]
             color = mode_colors[rank % len(mode_colors)]
             ls = mode_styles[rank % len(mode_styles)]
             lw = mode_widths[rank % len(mode_widths)]
             label = f'Mode {rank+1} (score={pred_scores[mode_idx]:.4f})'
-
             ax.plot(seg[:, 0], seg[:, 1], linestyle=ls, color=color, linewidth=lw,
                     alpha=alpha, zorder=6, label=label)
-
-            # Endpoint marker
             ax.scatter(seg[-1, 0], seg[-1, 1], c=[color], s=40,
                        alpha=alpha, zorder=7, edgecolors='white', linewidths=0.5)
-
-        # GT future — draw up to current frame
         if np.any(future_valid):
             n_gt = min(frame + 1, future_xy.shape[0])
             gt_seg = future_xy[:n_gt]
@@ -267,8 +225,6 @@ def main():
                         zorder=12, label='GT future')
                 ax.scatter(gt_x[-1], gt_y[-1], c='black', s=40,
                            zorder=13, edgecolors='white', linewidths=0.5)
-
-        # Formatting
         ax.set_aspect('equal')
         ax.set_xlim(xlim)
         ax.set_ylim(ylim)
@@ -282,22 +238,58 @@ def main():
         ax.legend(loc='upper right', fontsize=7, framealpha=0.8)
         ax.grid(True, alpha=0.2)
 
-    # ── Create animation ─────────────────────────────────────────────────
     os.makedirs(args.output_dir, exist_ok=True)
     out_name = f'animation_{scenario_id}_{object_id}_{actual_future_seconds:.0f}s.gif'
     out_path = os.path.join(args.output_dir, out_name)
 
-    print(f'Generating {total_frames} frames ({actual_future_seconds:.1f}s @ {DT*10:.0f}Hz)...')
     interval_ms = int(1000 / args.fps / args.speed)
-
     anim = animation.FuncAnimation(
         fig, update, frames=total_frames, interval=interval_ms, blit=False
     )
-
     anim.save(out_path, writer='pillow', fps=args.fps)
     plt.close(fig)
     print(f'Saved: {out_path}')
-    print(f'Duration: {actual_future_seconds:.1f}s = {total_frames} frames @ {args.fps} fps')
+    return True
+
+
+def main():
+    args = parse_args()
+
+    future_frames = min(int(args.future_seconds / DT), MAX_FUTURE_LEN)
+    future_frames = max(future_frames, 1)
+    actual_future_seconds = future_frames * DT
+
+    with open(args.result_pkl, 'rb') as f:
+        all_preds = pickle.load(f)
+
+    # Build scene_preds dict
+    scene_preds = {}
+    for scene_list in all_preds:
+        for pred_dict in scene_list:
+            sid = pred_dict['scenario_id']
+            scene_preds.setdefault(sid, []).append(pred_dict)
+
+    if args.all:
+        scenario_ids = sorted(scene_preds.keys())
+        print(f'Animating all {len(scenario_ids)} scenarios...')
+        for i, sid in enumerate(scenario_ids):
+            n_objects = len(scene_preds[sid])
+            for obj_idx in range(n_objects):
+                try:
+                    animate_single(args, all_preds, future_frames,
+                                   actual_future_seconds, sid, obj_idx)
+                except Exception as e:
+                    print(f'  SKIP {sid} obj={obj_idx}: {e}')
+            if (i + 1) % 50 == 0:
+                print(f'  Progress: {i+1}/{len(scenario_ids)}')
+        print(f'Done: {len(scenario_ids)} scenarios animated')
+    else:
+        scenario_id = args.scenario_id
+        if scenario_id is None:
+            scenario_id = sorted(scene_preds.keys())[0]
+            print(f'No --scenario_id given, using first: {scenario_id}')
+        animate_single(args, all_preds, future_frames,
+                       actual_future_seconds, scenario_id, args.object_index)
 
 
 if __name__ == '__main__':

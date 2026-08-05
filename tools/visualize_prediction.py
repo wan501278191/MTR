@@ -59,6 +59,8 @@ def parse_args():
                              'scenario (default: 0 = first)')
     parser.add_argument('--output_dir', type=str, default='./vis_output',
                         help='Output directory for PNG files')
+    parser.add_argument('--all', action='store_true', default=False,
+                        help='Visualize all scenarios in result.pkl')
     return parser.parse_args()
 
 
@@ -183,109 +185,76 @@ def add_arrows(ax, traj_xy, color, step=10, scale=1.0, alpha=0.8):
                     zorder=5)
 
 
-def main():
-    args = parse_args()
+def visualize_single(args, result_pkl_path, data_dir, output_dir, scenario_id, object_index):
+    """Visualize a single scenario + object."""
+    results = load_pkl(result_pkl_path)
 
-    # ── Load results ──────────────────────────────────────────────────────
-    if not os.path.isfile(args.result_pkl):
-        raise FileNotFoundError(f'result_pkl not found: {args.result_pkl}')
-    results = load_pkl(args.result_pkl)
-
-    # results: list[list[dict]]  (batch of scenes, each a list of object preds)
-    # Flatten into a dict keyed by scenario_id → list of pred dicts
     scene_preds = {}
     for scene_list in results:
         for pred_dict in scene_list:
             sid = pred_dict['scenario_id']
             scene_preds.setdefault(sid, []).append(pred_dict)
 
-    # ── Select scenario ──────────────────────────────────────────────────
-    if args.scenario_id is None:
-        scenario_id = sorted(scene_preds.keys())[0]
-        print(f'No --scenario_id given, using first: {scenario_id}')
-    else:
-        scenario_id = args.scenario_id
-
     if scenario_id not in scene_preds:
         raise KeyError(f'scenario_id {scenario_id!r} not found in result_pkl. '
                        f'Available: {sorted(scene_preds.keys())[:10]} ...')
 
     pred_list = scene_preds[scenario_id]
-    if args.object_index >= len(pred_list):
-        raise IndexError(f'object_index {args.object_index} out of range '
+    if object_index >= len(pred_list):
+        raise IndexError(f'object_index {object_index} out of range '
                          f'({len(pred_list)} objects in scenario)')
-    pred = pred_list[args.object_index]
+    pred = pred_list[object_index]
 
-    # ── Load scene pkl ───────────────────────────────────────────────────
-    scene_path = find_scene_file(args.data_dir, scenario_id)
+    scene_path = find_scene_file(data_dir, scenario_id)
     if scene_path is None:
         raise FileNotFoundError(
             f'Scene pkl for scenario_id={scenario_id!r} not found in '
-            f'{args.data_dir}')
-    print(f'Loading scene: {scene_path}')
+            f'{data_dir}')
     scene = load_pkl(scene_path)
 
-    # ── Extract data ─────────────────────────────────────────────────────
     current_time_index = scene['current_time_index']
     map_infos = scene['map_infos']
-    all_polylines = map_infos['all_polylines']  # (N, 7)
+    all_polylines = map_infos['all_polylines']
 
-    # Pred dict fields
-    pred_trajs = np.asarray(pred['pred_trajs'])      # (6, 80, 2)
-    pred_scores = np.asarray(pred['pred_scores'])    # (6,)
-    gt_trajs = np.asarray(pred['gt_trajs'])          # (91, 10)
+    pred_trajs = np.asarray(pred['pred_trajs'])
+    pred_scores = np.asarray(pred['pred_scores'])
+    gt_trajs = np.asarray(pred['gt_trajs'])
     object_id = pred['object_id']
     object_type = pred['object_type']
 
-    print(f'Scenario: {scenario_id}')
-    print(f'Object index: {args.object_index}, id: {object_id}, type: {object_type}')
-    print(f'pred_trajs: {pred_trajs.shape}, pred_scores: {pred_scores.shape}')
-    print(f'gt_trajs: {gt_trajs.shape}, current_time_index: {current_time_index}')
-
-    # ── Split GT into history and future ─────────────────────────────────
-    # gt_trajs columns: [x, y, z, l, w, h, heading, vx, vy, valid]
     valid_mask = gt_trajs[:, -1] > 0.5
-    hist_xy = gt_trajs[:current_time_index + 1, :2]      # (T_hist, 2)
-    future_xy = gt_trajs[current_time_index + 1:, :2]    # (80, 2)
+    hist_xy = gt_trajs[:current_time_index + 1, :2]
+    future_xy = gt_trajs[current_time_index + 1:, :2]
     future_valid = valid_mask[current_time_index + 1:]
 
-    # ── Plot ─────────────────────────────────────────────────────────────
     fig, ax = plt.subplots(1, 1, figsize=(12, 12))
 
-    # Map
     groups = group_polylines_by_type(all_polylines)
     plot_map(ax, groups)
 
-    # Historical trajectory (blue)
     if len(hist_xy) >= 2:
         ax.plot(hist_xy[:, 0], hist_xy[:, 1], '-', color='blue',
                 linewidth=2.0, zorder=10, label='History')
         ax.scatter(hist_xy[-1, 0], hist_xy[-1, 1], c='blue', s=50,
                    zorder=11, edgecolors='white', linewidths=0.5)
 
-    # Predicted trajectories (6 modes)
-    # Normalize scores for opacity
     scores_norm = pred_scores / (pred_scores.max() + 1e-8)
-    # Best mode gets brightest color; we also rank for legend
-    mode_order = np.argsort(-pred_scores)  # descending
+    mode_order = np.argsort(-pred_scores)
 
     cmap = plt.cm.viridis
     for rank, mode_idx in enumerate(mode_order):
-        traj = pred_trajs[mode_idx]  # (80, 2)
+        traj = pred_trajs[mode_idx]
         score = pred_scores[mode_idx]
-        alpha = 0.3 + 0.7 * scores_norm[mode_idx]  # 0.3..1.0
+        alpha = 0.3 + 0.7 * scores_norm[mode_idx]
         color = cmap(rank / max(len(mode_order) - 1, 1))
         label = f'Mode {mode_idx} (score={score:.3f})'
         ax.plot(traj[:, 0], traj[:, 1], '-', color=color, linewidth=1.5,
                 alpha=alpha, zorder=6, label=label)
         add_arrows(ax, traj, color=color, step=15, alpha=alpha)
-        # Endpoint marker
         ax.scatter(traj[-1, 0], traj[-1, 1], c=[color], s=30,
                    alpha=alpha, zorder=7, edgecolors='white', linewidths=0.3)
 
-    # Ground-truth future (black solid)
     if np.any(future_valid):
-        # Plot only valid segments
         future_x = future_xy[future_valid, 0]
         future_y = future_xy[future_valid, 1]
         ax.plot(future_x, future_y, '-', color='black', linewidth=2.0,
@@ -293,15 +262,13 @@ def main():
         ax.scatter(future_x[-1], future_y[-1], c='black', s=30,
                    zorder=13, edgecolors='white', linewidths=0.3)
 
-    # ── Formatting ───────────────────────────────────────────────────────
     ax.set_aspect('equal')
     ax.set_xlabel('X (world)')
     ax.set_ylabel('Y (world)')
     ax.set_title(f'{scenario_id} | {object_type} (id={object_id})')
 
-    # Auto-zoom to region of interest (around the agent)
     center = hist_xy[-1] if len(hist_xy) > 0 else np.zeros(2)
-    margin = 60.0  # meters
+    margin = 60.0
     ax.set_xlim(center[0] - margin, center[0] + margin)
     ax.set_ylim(center[1] - margin, center[1] + margin)
 
@@ -309,13 +276,48 @@ def main():
     ax.grid(True, alpha=0.2)
     fig.tight_layout()
 
-    # ── Save ─────────────────────────────────────────────────────────────
-    os.makedirs(args.output_dir, exist_ok=True)
+    os.makedirs(output_dir, exist_ok=True)
     out_name = f'visualization_{scenario_id}_{object_id}.png'
-    out_path = os.path.join(args.output_dir, out_name)
+    out_path = os.path.join(output_dir, out_name)
     fig.savefig(out_path, dpi=150, bbox_inches='tight')
     plt.close(fig)
     print(f'Saved: {out_path}')
+
+
+def main():
+    args = parse_args()
+
+    if not os.path.isfile(args.result_pkl):
+        raise FileNotFoundError(f'result_pkl not found: {args.result_pkl}')
+    results = load_pkl(args.result_pkl)
+
+    scene_preds = {}
+    for scene_list in results:
+        for pred_dict in scene_list:
+            sid = pred_dict['scenario_id']
+            scene_preds.setdefault(sid, []).append(pred_dict)
+
+    if args.all:
+        scenario_ids = sorted(scene_preds.keys())
+        print(f'Visualizing all {len(scenario_ids)} scenarios...')
+        for i, sid in enumerate(scenario_ids):
+            n_objects = len(scene_preds[sid])
+            for obj_idx in range(n_objects):
+                try:
+                    visualize_single(args, args.result_pkl, args.data_dir,
+                                     args.output_dir, sid, obj_idx)
+                except Exception as e:
+                    print(f'  SKIP {sid} obj={obj_idx}: {e}')
+            if (i + 1) % 50 == 0:
+                print(f'  Progress: {i+1}/{len(scenario_ids)}')
+        print(f'Done: {len(scenario_ids)} scenarios visualized')
+    else:
+        scenario_id = args.scenario_id
+        if scenario_id is None:
+            scenario_id = sorted(scene_preds.keys())[0]
+            print(f'No --scenario_id given, using first: {scenario_id}')
+        visualize_single(args, args.result_pkl, args.data_dir,
+                         args.output_dir, scenario_id, args.object_index)
 
 
 if __name__ == '__main__':

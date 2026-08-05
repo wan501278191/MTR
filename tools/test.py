@@ -45,7 +45,6 @@ def parse_config():
     parser.add_argument('--eval_all', action='store_true', default=False, help='whether to evaluate all checkpoints')
     parser.add_argument('--ckpt_dir', type=str, default=None, help='specify a ckpt directory to be evaluated if needed')
     parser.add_argument('--save_to_file', action='store_true', default=False, help='')
-    parser.add_argument('--scenario_id', type=str, default=None, help='only evaluate the specified scenario_id')
     parser.add_argument('--test_split_dir', type=str, default=None, help='override DATA_CONFIG.SPLIT_DIR.test')
     parser.add_argument('--test_info_file', type=str, default=None, help='override DATA_CONFIG.INFO_FILE.test')
 
@@ -227,19 +226,8 @@ def main():
         dist=dist_test, workers=args.workers, logger=logger, training=False
     )
 
-    if args.scenario_id is not None:
-        logger.info(f'Filtering dataset to scenario_id={args.scenario_id}')
-        test_set.infos = [info for info in test_set.infos if info['scenario_id'] == args.scenario_id]
-        logger.info(f'Scenes after scenario filter: {len(test_set.infos)}')
-        from torch.utils.data import DataLoader
-        test_loader = DataLoader(
-            test_set, batch_size=args.batch_size, pin_memory=True, num_workers=args.workers,
-            shuffle=False, collate_fn=test_set.collate_batch, drop_last=False, timeout=0
-        )
-        sampler = None
-
     if len(test_set) == 0:
-        logger.error('No scenes found after filtering. Check --scenario_id and test data path.')
+        logger.error('No scenes found. Check test data path.')
         sys.exit(1)
 
     model = model_utils.MotionTransformer(config=cfg.MODEL)
