@@ -33,12 +33,6 @@ def train_one_epoch(model, optimizer, train_loader, accumulated_iter, optim_cfg,
             batch = next(dataloader_iter)
             print('new iters')
 
-        if scheduler is not None:
-            try:
-                scheduler.step(accumulated_iter)
-            except:
-                scheduler.step()
-
         try:
             cur_lr = float(optimizer.lr)
         except:
@@ -60,7 +54,15 @@ def train_one_epoch(model, optimizer, train_loader, accumulated_iter, optim_cfg,
         if optimizer_2 is not None:
             optimizer_2.step()
 
+        # scheduler.step() MUST be called AFTER optimizer.step()
+        if scheduler is not None:
+            scheduler.step()
+
         accumulated_iter += 1
+        try:
+            cur_lr = optimizer.param_groups[0]['lr']
+        except:
+            pass
         disp_dict.update({'loss': loss.item(), 'lr': cur_lr})
 
         # log to console and tensorboard

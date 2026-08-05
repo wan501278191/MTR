@@ -92,23 +92,24 @@ def build_scheduler(optimizer, dataloader, opt_cfg, total_epochs, total_iters_ea
     if opt_cfg.get('SCHEDULER', None) == 'cosine':
         total_iters = total_iters_each_epoch * total_epochs
         warmup_iters = min(500, total_iters // 10)  # 500 iter warmup or 10% of total
-        scheduler = torch.optim.lr_scheduler.SequentialLR(
-            optimizer,
-            schedulers=[
-                torch.optim.lr_scheduler.LinearLR(
-                    optimizer,
-                    start_factor=0.01,        # start at 1% of LR (1e-6)
-                    end_factor=1.0,             # ramp up to full LR (1e-4)
-                    total_iters=warmup_iters,
-                ),
-                torch.optim.lr_scheduler.CosineAnnealingLR(
-                    optimizer,
-                    T_max=total_iters - warmup_iters,
-                    eta_min=opt_cfg.LR_CLIP,
-                ),
-            ],
-            milestones=[warmup_iters],
-        )
+        base_lr = opt_cfg.LR
+        eta_min = opt_cfg.LR_CLIP
+
+        def cosine_warmup_lr_fn(step):
+            """Single LambdaLR: linear warmup -> cosine annealing -> eta_min."""
+            if step < warmup_iters:
+                # Linear warmup: 1% -> 100%
+                return 0.01 + 0.99 * step / warmup_iters
+            else:
+                # Cosine annealing from warmup_iters to total_iters
+                progress = (step - warmup_iters) / max(total_iters - warmup_iters, 1)
+                return max(eta_min / base_lr, (1 + math.cos(math.pi * progress)) / 2)
+
+        # When resuming (last_epoch >= 0), LambdaLR requires initial_lr in param_groups
+        if last_epoch >= 0:
+            for g in optimizer.param_groups:
+                g.setdefault('initial_lr', opt_cfg.LR)
+        scheduler = lr_sched.LambdaLR(optimizer, lr_lambda=cosine_warmup_lr_fn, last_epoch=last_epoch)
     elif opt_cfg.get('SCHEDULER', None) == 'lambdaLR':
         scheduler = lr_sched.LambdaLR(optimizer, lr_lbmd, last_epoch=last_epoch)
     elif opt_cfg.get('SCHEDULER', None) == 'linearLR':
@@ -215,9 +216,12 @@ def main():
                 except:
                     ckpt_list = ckpt_list[:-1]
 
+    # LambdaLR advances per step() call (per-iteration), so last_epoch must be
+    # the global iteration count at resume point, not the epoch count.
+    # start_iter (accumulated_iter from checkpoint) is the correct value.
     scheduler = build_scheduler(
         optimizer, train_loader, cfg.OPTIMIZATION, total_epochs=args.epochs,
-        total_iters_each_epoch=len(train_loader), last_epoch=last_epoch
+        total_iters_each_epoch=len(train_loader), last_epoch=it - 1 if it > 0 else -1
     )
 
     model.train()  # before wrap to DistributedDataParallel to support to fix some parameters
