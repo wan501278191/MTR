@@ -44,6 +44,7 @@ def parse_config():
     parser.add_argument('--eval_all', action='store_true', default=False, help='whether to evaluate all checkpoints')
     parser.add_argument('--ckpt_dir', type=str, default=None, help='specify a ckpt directory to be evaluated if needed')
     parser.add_argument('--save_to_file', action='store_true', default=False, help='')
+    parser.add_argument('--scenario_id', type=str, default=None, help='only evaluate the specified scenario_id')
 
     args = parser.parse_args()
 
@@ -179,8 +180,12 @@ def main():
 
     if not args.eval_all:
         num_list = re.findall(r'\d+', args.ckpt) if args.ckpt is not None else []
-        epoch_id = num_list[-1] if num_list.__len__() > 0 else 'no_number'
-        eval_output_dir = eval_output_dir / ('epoch_%s' % epoch_id)
+        if num_list.__len__() > 0:
+            epoch_id = num_list[-1]
+            eval_output_dir = eval_output_dir / ('epoch_%s' % epoch_id)
+        else:
+            epoch_id = 'no_number'
+            # best_model.pth 等无数字文件名时不创建 epoch_no_number 子目录
     else:
         epoch_id = None
         eval_output_dir = eval_output_dir / 'eval_all_default'
@@ -213,6 +218,18 @@ def main():
         batch_size=args.batch_size,
         dist=dist_test, workers=args.workers, logger=logger, training=False
     )
+
+    if args.scenario_id is not None:
+        logger.info(f'Filtering dataset to scenario_id={args.scenario_id}')
+        test_set.infos = [info for info in test_set.infos if info['scenario_id'] == args.scenario_id]
+        logger.info(f'Scenes after scenario filter: {len(test_set.infos)}')
+        from torch.utils.data import DataLoader
+        test_loader = DataLoader(
+            test_set, batch_size=args.batch_size, pin_memory=True, num_workers=args.workers,
+            shuffle=False, collate_fn=test_set.collate_batch, drop_last=False, timeout=0
+        )
+        sampler = None
+
     model = model_utils.MotionTransformer(config=cfg.MODEL)
     with torch.no_grad():
         if args.eval_all:
