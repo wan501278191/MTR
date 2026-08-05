@@ -14,7 +14,7 @@ DATA_DIR="../../data/processed_scenarios_testing_A_full"  # 场景数据目录�
 # 测试集数据路径（相对于 DATA_ROOT 的子目录名和 infos 文件名）
 # 留空则使用 yaml 中 SPLIT_DIR.test / INFO_FILE.test 的默认值（验证集）
 TEST_SPLIT_DIR="processed_scenarios_testing_A_full"
-TEST_INFO_FILE="processed_scenarios_testing_A_full_infos.pkl"
+TEST_INFO_FILE="processed_scenarios_testA_full_infos.pkl"
 # ===========================================================
 
 # 命令行参数（可覆盖默认值）
