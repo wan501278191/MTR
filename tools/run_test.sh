@@ -8,7 +8,7 @@ cd "$(dirname "$0")"
 # ==================== 配置区（按需修改） ====================
 CFG_FILE="cfgs/waymo/mtr_voyah_data.yaml"   # 配置文件
 EXTRA_TAG="baseline"                         # 实验标签（输出目录名）
-EVAL_TAG="test_with_train"                   # 评估标签（eval/epoch_N/ 下的子目录名）
+TEST_TAG="test_with_train"                   # 测试标签（test/ 下的子目录名）
 OUTPUT_DIR=""                                 # 可视化输出目录（留空自动绑定到 result.pkl 同级）
 DATA_DIR="../../data/processed_scenarios_testing_A_full"  # 场景数据目录（可视化用）
 # 测试集数据路径（相对于 DATA_ROOT 的子目录名和 infos 文件名）
@@ -22,16 +22,16 @@ SCENARIO_ID="${1:-enc_00ab2662a208ecc4a140e9a9}"
 OBJECT_INDEX="${2:-0}"
 FUTURE_SECONDS="${3:-8.0}"
 
-# ---- 从 CFG_FILE / EXTRA_TAG / EVAL_TAG 推导所有路径 ----
+# ---- 从 CFG_FILE / EXTRA_TAG / TEST_TAG 推导所有路径 ----
 CFG_TAG=$(basename "$CFG_FILE" .yaml)                  # e.g. mtr_voyah_data
 EXP_GROUP_PATH=$(dirname "$CFG_FILE" | xargs basename)  # e.g. waymo
 BASE_DIR="../output/${EXP_GROUP_PATH}/${CFG_TAG}/${EXTRA_TAG}"
 CKPT_DIR="${BASE_DIR}/ckpt"
-EVAL_BASE="${BASE_DIR}/test"
+TEST_BASE="${BASE_DIR}/test"
 
 # 选择 checkpoint：优先 best_model，回退到最新 checkpoint
 BEST_CKPT="${CKPT_DIR}/best_model.pth"
-BEST_RECORD="${EVAL_BASE}/${EVAL_TAG}/best_eval_record.txt"
+BEST_RECORD="${TEST_BASE}/${TEST_TAG}/best_eval_record.txt"
 
 if [ -f "$BEST_CKPT" ]; then
     CKPT="$BEST_CKPT"
@@ -49,18 +49,13 @@ else
     exit 1
 fi
 
-# result.pkl 有两种来源，结构不同，必须区分：
-#
-# 1. 训练时自动评估（验证集）: eval/{EVAL_TAG}/result.pkl          ← 每 epoch 覆盖
-# 2. 训练后 repeat_eval_ckpt:  eval/{EVAL_TAG}/epoch_{N}/result.pkl  ← 验证集
-# 3. 独立 test.py 推理（数字ckpt）: eval/epoch_{N}/{EVAL_TAG}/result.pkl  ← 测试集
-# 4. 独立 test.py 推理（best_model）: eval/{EVAL_TAG}/result.pkl           ← 测试集
-#
-# 只有 #3 和 #4 才是测试集结果，可用于可视化。
-# #1 和 #4 路径结构相同，但 #1 是训练验证集结果。如果测试用不同的 EVAL_TAG 则不会冲突。
+# result.pkl 来源：
+#   独立 test.py 推理（数字ckpt）: test/epoch_{N}/{TEST_TAG}/result.pkl
+#   独立 test.py 推理（best_model）: test/{TEST_TAG}/result.pkl
+# 训练时的验证集评估结果在 eval/ 目录下，与此处的 test/ 目录隔离，不会冲突。
 
 # 查找已有的 test.py 推理 result.pkl（两种结构都搜，取最新）
-RESULT_PKL=$(find "${EVAL_BASE}" -path "*/${EVAL_TAG}/result.pkl" -printf '%T@ %p\n' 2>/dev/null \
+RESULT_PKL=$(find "${TEST_BASE}" -path "*/${TEST_TAG}/result.pkl" -printf '%T@ %p\n' 2>/dev/null \
     | sort -rn | head -1 | awk '{print $2}')
 
 # 可视化输出目录：用户指定优先，否则绑定到 result.pkl 同级目录
@@ -72,7 +67,7 @@ fi
 echo "========== 配置 =========="
 echo "  CFG_FILE:   $CFG_FILE"
 echo "  EXTRA_TAG:  $EXTRA_TAG"
-echo "  EVAL_TAG:   $EVAL_TAG"
+echo "  TEST_TAG:   $TEST_TAG"
 echo "  CKPT:       $CKPT"
 echo "  RESULT:     ${RESULT_PKL:-(将由 Step 1 生成)}"
 echo "  OUTPUT_DIR: ${OUTPUT_DIR:-(将由 Step 1 后自动绑定)}"
@@ -88,19 +83,19 @@ if [ -z "$RESULT_PKL" ]; then
         --cfg_file "$CFG_FILE" \
         --extra_tag "$EXTRA_TAG" \
         --ckpt "$CKPT" \
-        --eval_tag "$EVAL_TAG" \
+        --test_tag "$TEST_TAG" \
         --scenario_id "$SCENARIO_ID" \
         ${TEST_SPLIT_DIR:+--test_split_dir "$TEST_SPLIT_DIR"} \
         ${TEST_INFO_FILE:+--test_info_file "$TEST_INFO_FILE"} \
         --max_waiting_mins 0
 
     # 推理后动态查找 result.pkl（两种结构都搜，取最新）
-    RESULT_PKL=$(find "${EVAL_BASE}" -path "*/${EVAL_TAG}/result.pkl" -printf '%T@ %p\n' 2>/dev/null \
+    RESULT_PKL=$(find "${TEST_BASE}" -path "*/${TEST_TAG}/result.pkl" -printf '%T@ %p\n' 2>/dev/null \
         | sort -rn | head -1 | awk '{print $2}')
 
     if [ -z "$RESULT_PKL" ]; then
         echo "ERROR: result.pkl not found after inference"
-        find "${EVAL_BASE}" -name "result.pkl" 2>/dev/null
+        find "${TEST_BASE}" -name "result.pkl" 2>/dev/null
         exit 1
     fi
 

@@ -41,7 +41,7 @@ def parse_config():
 
     parser.add_argument('--max_waiting_mins', type=int, default=30, help='max waiting minutes')
     parser.add_argument('--start_epoch', type=int, default=0, help='')
-    parser.add_argument('--eval_tag', type=str, default='default', help='eval tag for this experiment')
+    parser.add_argument('--test_tag', type=str, default='default', help='test tag for this experiment')
     parser.add_argument('--eval_all', action='store_true', default=False, help='whether to evaluate all checkpoints')
     parser.add_argument('--ckpt_dir', type=str, default=None, help='specify a ckpt directory to be evaluated if needed')
     parser.add_argument('--save_to_file', action='store_true', default=False, help='')
@@ -184,7 +184,7 @@ def main():
     output_dir = cfg.ROOT_DIR / 'output' / cfg.EXP_GROUP_PATH / cfg.TAG / args.extra_tag
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    eval_output_dir = output_dir / 'eval'
+    eval_output_dir = output_dir / 'test'
 
     if not args.eval_all:
         num_list = re.findall(r'\d+', args.ckpt) if args.ckpt is not None else []
@@ -198,8 +198,8 @@ def main():
         epoch_id = None
         eval_output_dir = eval_output_dir / 'eval_all_default'
 
-    if args.eval_tag is not None:
-        eval_output_dir = eval_output_dir / args.eval_tag
+    if args.test_tag is not None:
+        eval_output_dir = eval_output_dir / args.test_tag
 
     eval_output_dir.mkdir(parents=True, exist_ok=True)
     log_file = eval_output_dir / ('log_eval_%s.txt' % datetime.datetime.now().strftime('%Y%m%d-%H%M%S'))
