@@ -8,7 +8,7 @@ cd "$(dirname "$0")"
 # ==================== 配置区（按需修改） ====================
 CFG_FILE="cfgs/waymo/mtr_voyah_data.yaml"   # 配置文件
 EXTRA_TAG="baseline"                         # 实验标签（输出目录名）
-EVAL_TAG="eval_with_train"                   # 评估标签（eval/epoch_N/ 下的子目录名）
+EVAL_TAG="test_with_train"                   # 评估标签（eval/epoch_N/ 下的子目录名）
 OUTPUT_DIR=""                                 # 可视化输出目录（留空自动绑定到 result.pkl 同级）
 DATA_DIR="../../data/processed_scenarios_testing_A_full"  # 场景数据目录（可视化用）
 # 测试集数据路径（相对于 DATA_ROOT 的子目录名和 infos 文件名）
@@ -27,7 +27,7 @@ CFG_TAG=$(basename "$CFG_FILE" .yaml)                  # e.g. mtr_voyah_data
 EXP_GROUP_PATH=$(dirname "$CFG_FILE" | xargs basename)  # e.g. waymo
 BASE_DIR="../output/${EXP_GROUP_PATH}/${CFG_TAG}/${EXTRA_TAG}"
 CKPT_DIR="${BASE_DIR}/ckpt"
-EVAL_BASE="${BASE_DIR}/eval"
+EVAL_BASE="${BASE_DIR}/test"
 
 # 选择 checkpoint：优先 best_model，回退到最新 checkpoint
 BEST_CKPT="${CKPT_DIR}/best_model.pth"
