@@ -19,12 +19,16 @@ OBJECT_INDEX="${2:-0}"
 FUTURE_SECONDS="${3:-8.0}"
 
 # 从配置推导 checkpoint 和 result.pkl 路径
-CKPT_DIR="../output/waymo/$(basename $(dirname $CFG_FILE))/${EXTRA_TAG}/ckpt"
+# train.py 中 cfg.TAG = yaml文件名(去掉.yaml), cfg.EXP_GROUP_PATH = waymo
+# 输出目录: output/{EXP_GROUP_PATH}/{TAG}/{EXTRA_TAG}/
+CFG_TAG=$(basename "$CFG_FILE" .yaml)  # e.g. mtr_voyah_smoke
+EXP_GROUP_PATH="waymo"
+CKPT_DIR="../output/${EXP_GROUP_PATH}/${CFG_TAG}/${EXTRA_TAG}/ckpt"
 LATEST_CKPT=$(ls -t ${CKPT_DIR}/checkpoint_epoch_*.pth 2>/dev/null | head -1)
 if [ -n "$LATEST_CKPT" ]; then
     CKPT="$LATEST_CKPT"
     EPOCH_NUM=$(echo "$CKPT" | grep -oP 'epoch_\K\d+')
-    RESULT_PKL="../output/waymo/$(basename $(dirname $CFG_FILE))/${EXTRA_TAG}/eval/epoch_${EPOCH_NUM}/${EVAL_TAG}/result.pkl"
+    RESULT_PKL="../output/${EXP_GROUP_PATH}/${CFG_TAG}/${EXTRA_TAG}/eval/epoch_${EPOCH_NUM}/${EVAL_TAG}/result.pkl"
 else
     # 回退到硬编码冒烟测试路径
     CKPT="../output/waymo/mtr_voyah_smoke/local_smoke/ckpt/checkpoint_epoch_30.pth"
