@@ -10,7 +10,11 @@ CFG_FILE="cfgs/waymo/mtr_voyah_data.yaml"   # 配置文件
 EXTRA_TAG="baseline"                         # 实验标签（输出目录名）
 EVAL_TAG="eval_with_train"                   # 评估标签（eval/epoch_N/ 下的子目录名）
 OUTPUT_DIR=""                                 # 可视化输出目录（留空自动绑定到 result.pkl 同级）
-DATA_DIR="../../data/processed_scenarios_testing_A_full"  # 场景数据目录
+DATA_DIR="../../data/processed_scenarios_testing_A_full"  # 场景数据目录（可视化用）
+# 测试集数据路径（相对于 DATA_ROOT 的子目录名和 infos 文件名）
+# 留空则使用 yaml 中 SPLIT_DIR.test / INFO_FILE.test 的默认值（验证集）
+TEST_SPLIT_DIR="processed_scenarios_testing_A_full"
+TEST_INFO_FILE="processed_scenarios_testing_A_full_infos.pkl"
 # ===========================================================
 
 # 命令行参数（可覆盖默认值）
@@ -86,6 +90,8 @@ if [ -z "$RESULT_PKL" ]; then
         --ckpt "$CKPT" \
         --eval_tag "$EVAL_TAG" \
         --scenario_id "$SCENARIO_ID" \
+        ${TEST_SPLIT_DIR:+--test_split_dir "$TEST_SPLIT_DIR"} \
+        ${TEST_INFO_FILE:+--test_info_file "$TEST_INFO_FILE"} \
         --max_waiting_mins 0
 
     # 推理后动态查找 result.pkl（两种结构都搜，取最新）

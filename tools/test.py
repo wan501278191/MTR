@@ -10,6 +10,7 @@ import glob
 import os
 import re
 import time
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -45,12 +46,19 @@ def parse_config():
     parser.add_argument('--ckpt_dir', type=str, default=None, help='specify a ckpt directory to be evaluated if needed')
     parser.add_argument('--save_to_file', action='store_true', default=False, help='')
     parser.add_argument('--scenario_id', type=str, default=None, help='only evaluate the specified scenario_id')
+    parser.add_argument('--test_split_dir', type=str, default=None, help='override DATA_CONFIG.SPLIT_DIR.test')
+    parser.add_argument('--test_info_file', type=str, default=None, help='override DATA_CONFIG.INFO_FILE.test')
 
     args = parser.parse_args()
 
     cfg_from_yaml_file(args.cfg_file, cfg)
     cfg.TAG = Path(args.cfg_file).stem
     cfg.EXP_GROUP_PATH = '/'.join(args.cfg_file.split('/')[1:-1])  # remove 'cfgs' and 'xxxx.yaml'
+
+    if args.test_split_dir is not None:
+        cfg.DATA_CONFIG.SPLIT_DIR.test = args.test_split_dir
+    if args.test_info_file is not None:
+        cfg.DATA_CONFIG.INFO_FILE.test = args.test_info_file
 
     np.random.seed(1024)
 
@@ -229,6 +237,10 @@ def main():
             shuffle=False, collate_fn=test_set.collate_batch, drop_last=False, timeout=0
         )
         sampler = None
+
+    if len(test_set) == 0:
+        logger.error('No scenes found after filtering. Check --scenario_id and test data path.')
+        sys.exit(1)
 
     model = model_utils.MotionTransformer(config=cfg.MODEL)
     with torch.no_grad():
