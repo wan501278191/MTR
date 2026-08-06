@@ -14,6 +14,7 @@ import math
 import torch
 import torch.nn as nn
 import torch.optim.lr_scheduler as lr_sched
+import torch.distributed as dist
 from mtr.utils.swanlab_logger import SwanLabWriter
 
 from mtr.datasets import build_dataloader
@@ -298,6 +299,10 @@ def main():
     # Close tensorboard writers cleanly to avoid RuntimeError at interpreter shutdown
     if tb_log is not None:
         tb_log.close()
+
+    # Clean up distributed process group to release GPU resources
+    if dist_train:
+        dist.destroy_process_group()
 
 
 if __name__ == '__main__':

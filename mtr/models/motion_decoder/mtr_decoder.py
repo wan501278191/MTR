@@ -177,7 +177,7 @@ class MTRDecoder(nn.Module):
             intention_points = {}
             for cur_type in self.object_type:
                 cur_intention_points = intention_points_dict[cur_type]
-                cur_intention_points = torch.from_numpy(cur_intention_points).float().view(-1, 2).to(self.device)
+                cur_intention_points = torch.from_numpy(cur_intention_points).float().view(-1, 2)  # keep on CPU, move lazily in get_motion_query
                 intention_points[cur_type] = cur_intention_points
 
             intention_query_mlps = common_layers.build_mlps(
@@ -237,7 +237,7 @@ class MTRDecoder(nn.Module):
             raise NotImplementedError
         else:
             intention_points = torch.stack([
-                self.intention_points[center_objects_type[obj_idx]]
+                self.intention_points[center_objects_type[obj_idx]].to(self.device)
                 for obj_idx in range(num_center_objects)], dim=0)
             intention_points = intention_points.permute(1, 0, 2)  # (num_query, num_center_objects, 2)
 
