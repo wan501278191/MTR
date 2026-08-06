@@ -15,6 +15,7 @@ Usage in train.py / test.py:
 """
 import os
 
+import math
 
 class SwanLabWriter:
     # Group prefix mapping: tag prefix -> SwanLab group name
@@ -59,7 +60,14 @@ class SwanLabWriter:
         self._global_step += 1
         # Use '/' as separator — SwanLab groups by first '/' segment
         swanlab_tag = tag.replace('.', '/', 1) if '.' in tag else tag
-        self._swanlab.log({swanlab_tag: float(value)}, step=self._global_step)
+
+        # Log-transform loss metrics for better visualization scale
+        val = float(value)
+        if 'loss' in tag.lower():
+            val = math.log(max(val, 1e-8))
+            swanlab_tag = swanlab_tag + '/log'
+
+        self._swanlab.log({swanlab_tag: val}, step=self._global_step)
 
     def add_text(self, tag, text, step=None):
         tag = tag.replace('/', '.')
