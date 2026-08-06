@@ -78,8 +78,21 @@ MODEL:
         LOSS_WEIGHTS: {
             'cls': 1.0, 
             'reg': 1.0, 
-            'vel': 0.5
+            'vel': 0.5,
+            'maneuver': 0.3
         }
+
+        # P0-1: soft assignment (top-k distance-weighted targets instead of argmin)
+        USE_SOFT_ASSIGNMENT: True
+        SOFT_ASSIGNMENT_TOPK: 5
+        SOFT_ASSIGNMENT_SIGMA: 1.0
+        # P0-3: label smoothing for classification
+        CLS_LABEL_SMOOTHING: 0.1
+
+        # P0-2: semantic maneuver auxiliary head
+        USE_MANEUVER_AUX: True
+        NUM_MANEUVER_CLASSES: 6
+        MANEUVER_LOSS_WEIGHT: 0.3
 
         NMS_DIST_THRESH: 2.5
 

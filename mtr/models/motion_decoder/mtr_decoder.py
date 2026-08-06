@@ -78,6 +78,25 @@ class MTRDecoder(nn.Module):
             in_channels=self.d_model, hidden_size=self.d_model, num_decoder_layers=self.num_decoder_layers
         )
 
+        # P0-2: semantic maneuver classification head (auxiliary supervision)
+        self.num_maneuver_classes = self.model_cfg.get('NUM_MANEUVER_CLASSES', 6)
+        self.use_maneuver_aux = self.model_cfg.get('USE_MANEUVER_AUX', True)
+        self.maneuver_loss_weight = self.model_cfg.get('MANEUVER_LOSS_WEIGHT', 0.3)
+        if self.use_maneuver_aux:
+            self.maneuver_cls_head = common_layers.build_mlps(
+                c_in=self.d_model,
+                mlp_channels=[self.d_model, self.d_model, self.num_maneuver_classes],
+                ret_before_act=True, without_norm=True
+            )
+        else:
+            self.maneuver_cls_head = None
+
+        # P0-1 + P0-3: soft assignment + label smoothing config
+        self.use_soft_assignment = self.model_cfg.get('USE_SOFT_ASSIGNMENT', True)
+        self.soft_assignment_topk = self.model_cfg.get('SOFT_ASSIGNMENT_TOPK', 5)
+        self.soft_assignment_sigma = self.model_cfg.get('SOFT_ASSIGNMENT_SIGMA', 1.0)
+        self.cls_label_smoothing = self.model_cfg.get('CLS_LABEL_SMOOTHING', 0.1)
+
         self.forward_ret_dict = {}
 
     def build_dense_future_prediction_layers(self, hidden_dim, num_future_frames):
@@ -365,6 +384,7 @@ class MTRDecoder(nn.Module):
             raise NotImplementedError
 
         assert len(pred_list) == self.num_decoder_layers
+        self.forward_ret_dict['final_query_content'] = query_content  # (num_query, num_center_objects, C) for P0-2
         return pred_list
 
     def get_decoder_loss(self, tb_pre_tag=''):
@@ -409,18 +429,49 @@ class MTRDecoder(nn.Module):
 
             loss_cls = F.cross_entropy(input=pred_scores, target=center_gt_positive_idx, reduction='none')
 
+            # P0-1 + P0-3: replace hard CE with soft-target CE (top-k distance-weighted + label smoothing)
+            if self.use_soft_assignment:
+                loss_cls = loss_utils.soft_target_cls_loss(
+                    pred_scores=pred_scores,
+                    dist_to_intention=dist,
+                    topk=self.soft_assignment_topk,
+                    sigma=self.soft_assignment_sigma,
+                    label_smoothing=self.cls_label_smoothing,
+                )
+            else:
+                loss_cls = F.cross_entropy(input=pred_scores, target=center_gt_positive_idx, reduction='none')
+
             # total loss
             weight_cls = self.model_cfg.LOSS_WEIGHTS.get('cls', 1.0)
             weight_reg = self.model_cfg.LOSS_WEIGHTS.get('reg', 1.0)
             weight_vel = self.model_cfg.LOSS_WEIGHTS.get('vel', 0.2)
 
-            layer_loss = loss_reg_gmm * weight_reg + loss_reg_vel * weight_vel + loss_cls.sum(dim=-1) * weight_cls
+            layer_loss = loss_reg_gmm * weight_reg + loss_reg_vel * weight_vel + loss_cls * weight_cls
             layer_loss = layer_loss.mean()
             total_loss += layer_loss
             tb_dict[f'{tb_pre_tag}loss_layer{layer_idx}'] = layer_loss.item()
             tb_dict[f'{tb_pre_tag}loss_layer{layer_idx}_reg_gmm'] = loss_reg_gmm.mean().item() * weight_reg
             tb_dict[f'{tb_pre_tag}loss_layer{layer_idx}_reg_vel'] = loss_reg_vel.mean().item() * weight_vel
             tb_dict[f'{tb_pre_tag}loss_layer{layer_idx}_cls'] = loss_cls.mean().item() * weight_cls
+
+            # P0-2: semantic maneuver auxiliary loss (last layer only)
+            if self.use_maneuver_aux and self.maneuver_cls_head is not None and layer_idx + 1 == self.num_decoder_layers:
+                final_query = self.forward_ret_dict.get('final_query_content', None)  # (num_query, N, C)
+                if final_query is not None:
+                    best_query = final_query.permute(1, 0, 2)[
+                        torch.arange(num_center_objects), center_gt_positive_idx
+                    ]  # (N, C)
+                    maneuver_logits = self.maneuver_cls_head(best_query)  # (N, num_maneuver_classes)
+                    maneuver_labels = loss_utils.compute_maneuver_label(
+                        gt_trajs=center_gt_trajs,
+                        gt_final_valid_idx=center_gt_final_valid_idx.to(self.device),
+                        num_classes=self.num_maneuver_classes,
+                    )
+                    loss_maneuver = F.cross_entropy(maneuver_logits, maneuver_labels, reduction='none')
+                    layer_loss = layer_loss + loss_maneuver.mean() * self.maneuver_loss_weight
+                    total_loss = total_loss + loss_maneuver.mean() * self.maneuver_loss_weight
+                    tb_dict[f'{tb_pre_tag}loss_maneuver'] = loss_maneuver.mean().item()
+                    tb_dict[f'{tb_pre_tag}loss'] = layer_loss.item()
 
             if layer_idx + 1 == self.num_decoder_layers:
                 layer_tb_dict_ade = motion_utils.get_ade_of_each_category(
