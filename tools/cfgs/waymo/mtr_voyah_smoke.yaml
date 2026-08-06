@@ -92,6 +92,17 @@ MODEL:
         NUM_MANEUVER_CLASSES: 6
         MANEUVER_LOSS_WEIGHT: 0.3
 
+        # P1-5: learnable intention query
+        USE_LEARNABLE_QUERY: True
+        NUM_INTENTION_QUERY: 64
+
+        # P1-4: kinematic feature injection
+        USE_KINEMATIC_QUERY: True
+
+        # P1-7: GRU temporal trend encoding
+        USE_TEMPORAL_TREND: True
+        NUM_HISTORICAL_STEPS: 11
+
         NMS_DIST_THRESH: 2.5
 
 

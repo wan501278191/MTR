@@ -97,6 +97,40 @@ class MTRDecoder(nn.Module):
         self.soft_assignment_sigma = self.model_cfg.get('SOFT_ASSIGNMENT_SIGMA', 1.0)
         self.cls_label_smoothing = self.model_cfg.get('CLS_LABEL_SMOOTHING', 0.1)
 
+        # P1-5: learnable intention query (replaces static K-means anchors)
+        self.use_learnable_query = self.model_cfg.get('USE_LEARNABLE_QUERY', True)
+        self.num_intention_query = self.model_cfg.get('NUM_INTENTION_QUERY', 64)
+        if self.use_learnable_query:
+            # learnable query embeddings: (num_query, d_model)
+            self.learnable_query_emb = nn.Parameter(torch.zeros(self.num_intention_query, self.d_model))
+            nn.init.normal_(self.learnable_query_emb, mean=0.0, std=0.02)
+
+        # P1-4: FourierEmbedding for kinematic feature injection into queries
+        self.use_kinematic_query = self.model_cfg.get('USE_KINEMATIC_QUERY', True)
+        if self.use_kinematic_query:
+            self.kinematic_proj = nn.Sequential(
+                nn.Linear(self.d_model + 6, self.d_model),  # 6 = vx,vy,ax,ay,sin_heading,cos_heading
+                nn.ReLU(),
+                nn.Linear(self.d_model, self.d_model),
+            )
+
+        # P1-7: GRU temporal trend encoder for center object history
+        self.use_temporal_trend = self.model_cfg.get('USE_TEMPORAL_TREND', True)
+        self.num_historical_steps = self.model_cfg.get('NUM_HISTORICAL_STEPS', 11)
+        if self.use_temporal_trend:
+            self.temporal_gru = nn.GRU(
+                input_size=4,  # [vx, vy, sin_heading, cos_heading]
+                hidden_size=self.d_model,
+                num_layers=1,
+                batch_first=True,
+                bias=True,
+            )
+            self.temporal_proj = nn.Sequential(
+                nn.Linear(self.d_model, self.d_model),
+                nn.ReLU(),
+                nn.Linear(self.d_model, self.d_model),
+            )
+
         self.forward_ret_dict = {}
 
     def build_dense_future_prediction_layers(self, hidden_dim, num_future_frames):
@@ -197,7 +231,7 @@ class MTRDecoder(nn.Module):
 
         return ret_obj_feature, ret_pred_dense_future_trajs
 
-    def get_motion_query(self, center_objects_type):
+    def get_motion_query(self, center_objects_type, center_objects_feature=None, input_dict=None):
         num_center_objects = len(center_objects_type)
         if self.use_place_holder:
             raise NotImplementedError
@@ -207,9 +241,91 @@ class MTRDecoder(nn.Module):
                 for obj_idx in range(num_center_objects)], dim=0)
             intention_points = intention_points.permute(1, 0, 2)  # (num_query, num_center_objects, 2)
 
-            intention_query = position_encoding_utils.gen_sineembed_for_position(intention_points, hidden_dim=self.d_model)
-            intention_query = self.intention_query_mlps(intention_query.view(-1, self.d_model)).view(-1, num_center_objects, self.d_model)  # (num_query, num_center_objects, C)
+            # P1-5: base query from learnable embeddings (fallback to sine pos encoding)
+            if self.use_learnable_query:
+                # (num_query, d_model) -> (num_query, num_center_objects, d_model)
+                intention_query = self.learnable_query_emb.unsqueeze(1).expand(
+                    -1, num_center_objects, -1).contiguous()
+            else:
+                intention_query = position_encoding_utils.gen_sineembed_for_position(
+                    intention_points, hidden_dim=self.d_model)
+                intention_query = self.intention_query_mlps(
+                    intention_query.view(-1, self.d_model)).view(
+                    -1, num_center_objects, self.d_model)
+
+            # P1-4: inject kinematic features into query
+            if self.use_kinematic_query and center_objects_feature is not None:
+                # center_objects_feature: (num_center_objects, C) from context encoder
+                # Extract kinematic features from input_dict if available
+                kinematic_feat = self._extract_kinematic_features(
+                    input_dict, num_center_objects, center_objects_feature)
+                # kinematic_feat: (num_center_objects, d_model+6)
+                kinematic_emb = self.kinematic_proj(kinematic_feat)  # (num_center_objects, d_model)
+                # Add to each query
+                intention_query = intention_query + kinematic_emb.unsqueeze(0)
+
+            # P1-7: inject GRU temporal trend into query
+            if self.use_temporal_trend and input_dict is not None:
+                temporal_emb = self._encode_temporal_trend(input_dict, num_center_objects)
+                # temporal_emb: (num_center_objects, d_model)
+                intention_query = intention_query + temporal_emb.unsqueeze(0)
+
         return intention_query, intention_points
+
+    def _extract_kinematic_features(self, input_dict, num_center_objects, center_objects_feature):
+        """P1-4: Extract kinematic features (velocity, acceleration, heading) from input_dict."""
+        if input_dict is None or 'obj_trajs' not in input_dict:
+            # Fallback: use center_objects_feature only
+            return torch.cat([center_objects_feature,
+                              torch.zeros(num_center_objects, 6, device=center_objects_feature.device)], dim=-1)
+
+        obj_trajs = input_dict['obj_trajs'].to(self.device)  # (N, num_objects, T, 29)
+        obj_trajs_mask = input_dict['obj_trajs_mask'].to(self.device)
+        track_index = input_dict['track_index_to_predict']
+
+        # Extract center object's last valid frame kinematics
+        # obj_trajs layout: [25:27]=vx,vy  [23:25]=sin/cos heading  [27:29]=ax,ay
+        center_trajs = obj_trajs[torch.arange(num_center_objects), track_index]  # (N, T, 29)
+        center_masks = obj_trajs_mask[torch.arange(num_center_objects), track_index]  # (N, T)
+
+        # Use last valid frame
+        last_valid_idx = center_masks.sum(dim=-1) - 1  # (N,)
+        last_valid_idx = last_valid_idx.clamp(min=0)
+        idx = torch.arange(num_center_objects, device=self.device)
+        last_frame = center_trajs[idx, last_valid_idx]  # (N, 29)
+
+        vx = last_frame[:, 25:26]  # (N, 1)
+        vy = last_frame[:, 26:27]
+        sin_h = last_frame[:, 23:24]
+        cos_h = last_frame[:, 24:25]
+        ax = last_frame[:, 27:28]
+        ay = last_frame[:, 28:29]
+        kinematic = torch.cat([vx, vy, ax, ay, sin_h, cos_h], dim=-1)  # (N, 6)
+
+        return torch.cat([center_objects_feature, kinematic], dim=-1)  # (N, d_model+6)
+
+    def _encode_temporal_trend(self, input_dict, num_center_objects):
+        """P1-7: Encode temporal trend of center object using GRU."""
+        if input_dict is None or 'obj_trajs' not in input_dict:
+            return torch.zeros(num_center_objects, self.d_model, device=self.device)
+
+        obj_trajs = input_dict['obj_trajs'].to(self.device)
+        obj_trajs_mask = input_dict['obj_trajs_mask'].to(self.device)
+        track_index = input_dict['track_index_to_predict']
+
+        center_trajs = obj_trajs[torch.arange(num_center_objects), track_index]  # (N, T, 29)
+        center_masks = obj_trajs_mask[torch.arange(num_center_objects), track_index]  # (N, T)
+
+        # Extract [vx, vy, sin_heading, cos_heading] for all timesteps
+        kinematic_seq = center_trajs[:, :, [25, 26, 23, 24]]  # (N, T, 4)
+        # Zero out invalid frames
+        kinematic_seq = kinematic_seq * center_masks.unsqueeze(-1).float()
+
+        # GRU forward
+        gru_out, h_n = self.temporal_gru(kinematic_seq)  # gru_out: (N, T, d_model), h_n: (1, N, d_model)
+        temporal_emb = self.temporal_proj(h_n.squeeze(0))  # (N, d_model)
+        return temporal_emb
+
 
     def apply_cross_attention(self, kv_feature, kv_mask, kv_pos, query_content, query_embed, attention_layer,
                               dynamic_query_center=None, layer_idx=0, use_local_attn=False, query_index_pair=None,
@@ -311,8 +427,8 @@ class MTRDecoder(nn.Module):
 
         return sorted_idxs.int(), base_map_idxs
 
-    def apply_transformer_decoder(self, center_objects_feature, center_objects_type, obj_feature, obj_mask, obj_pos, map_feature, map_mask, map_pos):
-        intention_query, intention_points = self.get_motion_query(center_objects_type)
+    def apply_transformer_decoder(self, center_objects_feature, center_objects_type, obj_feature, obj_mask, obj_pos, map_feature, map_mask, map_pos, input_dict=None):
+        intention_query, intention_points = self.get_motion_query(center_objects_type, center_objects_feature=center_objects_feature, input_dict=input_dict)
         query_content = torch.zeros_like(intention_query)
         self.forward_ret_dict['intention_points'] = intention_points.permute(1, 0, 2)  # (num_center_objects, num_query, 2)
 
@@ -585,7 +701,8 @@ class MTRDecoder(nn.Module):
             center_objects_feature=center_objects_feature,
             center_objects_type=input_dict['center_objects_type'],
             obj_feature=obj_feature, obj_mask=obj_mask, obj_pos=obj_pos,
-            map_feature=map_feature, map_mask=map_mask, map_pos=map_pos
+            map_feature=map_feature, map_mask=map_mask, map_pos=map_pos,
+            input_dict=input_dict
         )
 
         self.forward_ret_dict['pred_list'] = pred_list
