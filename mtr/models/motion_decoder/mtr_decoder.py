@@ -427,8 +427,6 @@ class MTRDecoder(nn.Module):
             loss_reg_vel = F.l1_loss(pred_vel, center_gt_trajs[:, :, 2:4], reduction='none')
             loss_reg_vel = (loss_reg_vel * center_gt_trajs_mask[:, :, None]).sum(dim=-1).sum(dim=-1)
 
-            loss_cls = F.cross_entropy(input=pred_scores, target=center_gt_positive_idx, reduction='none')
-
             # P0-1 + P0-3: replace hard CE with soft-target CE (top-k distance-weighted + label smoothing)
             if self.use_soft_assignment:
                 loss_cls = loss_utils.soft_target_cls_loss(
@@ -446,7 +444,7 @@ class MTRDecoder(nn.Module):
             weight_reg = self.model_cfg.LOSS_WEIGHTS.get('reg', 1.0)
             weight_vel = self.model_cfg.LOSS_WEIGHTS.get('vel', 0.2)
 
-            layer_loss = loss_reg_gmm * weight_reg + loss_reg_vel * weight_vel + loss_cls * weight_cls
+            layer_loss = loss_reg_gmm * weight_reg + loss_reg_vel * weight_vel + loss_cls.sum() * weight_cls
             layer_loss = layer_loss.mean()
             total_loss += layer_loss
             tb_dict[f'{tb_pre_tag}loss_layer{layer_idx}'] = layer_loss.item()
