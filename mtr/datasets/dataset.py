@@ -73,7 +73,7 @@ class DatasetTemplate(torch_data.Dataset):
                 'obj_trajs_pos', 'obj_trajs_last_pos', 'obj_trajs_future_state', 'obj_trajs_future_mask']:
                 val_list = [torch.from_numpy(x) for x in val_list]
                 input_dict[key] = common_utils.merge_batch_by_padding_2nd_dim(val_list)
-            elif key in ['scenario_id', 'obj_types', 'obj_ids', 'center_objects_type', 'center_objects_id', 'aug_flip_y']:
+            elif key in ['scenario_id', 'obj_types', 'obj_ids', 'center_objects_type', 'center_objects_id']:
                 input_dict[key] = np.concatenate(val_list, axis=0)
             else:
                 val_list = [torch.from_numpy(x) for x in val_list]

@@ -97,12 +97,10 @@ class WaymoDataset(DatasetTemplate):
         obj_trajs_future = obj_trajs_full[:, current_time_index + 1:]
 
         if self.training and self.dataset_cfg.get('DATA_AUGMENTATION', False):
-            obj_trajs_full, info['map_infos'], flip_y = self.apply_data_augmentation(obj_trajs_full, info['map_infos'])
+            obj_trajs_full, info['map_infos'] = self.apply_data_augmentation(obj_trajs_full, info['map_infos'])
             obj_trajs_past = obj_trajs_full[:, :current_time_index + 1]
             obj_trajs_future = obj_trajs_full[:, current_time_index + 1:]
 
-        else:
-            flip_y = False
 
         center_objects, track_index_to_predict = self.get_interested_agents(
             track_index_to_predict=track_index_to_predict,
@@ -138,8 +136,7 @@ class WaymoDataset(DatasetTemplate):
             'center_gt_trajs': center_gt_trajs,
             'center_gt_trajs_mask': center_gt_trajs_mask,
             'center_gt_final_valid_idx': center_gt_final_valid_idx,
-            'center_gt_trajs_src': obj_trajs_full[track_index_to_predict],
-            'aug_flip_y': np.array([flip_y] * len(track_index_to_predict), dtype=np.bool_),
+            'center_gt_trajs_src': obj_trajs_full[track_index_to_predict]
         }
 
         if not self.dataset_cfg.get('WITHOUT_HDMAP', False):
@@ -218,7 +215,7 @@ class WaymoDataset(DatasetTemplate):
             map_infos (dict): contains 'all_polylines' (num_points, 7) [x, y, z, dx, dy, dz, type]
 
         Returns:
-            augmented obj_trajs_full, map_infos, flip_y (bool): whether horizontal flip was applied
+            augmented obj_trajs_full, map_infos
         """
         angle = np.random.uniform(-np.pi, np.pi)
         cos_a, sin_a = np.cos(angle), np.sin(angle)
@@ -238,9 +235,7 @@ class WaymoDataset(DatasetTemplate):
         map_infos['all_polylines'] = all_polylines
 
         # Random horizontal flip (negate y)
-        flip_y = False
         if np.random.rand() > 0.5:
-            flip_y = True
             obj_trajs_full[..., 1] *= -1  # y
             obj_trajs_full[..., 3] *= -1  # dy
             obj_trajs_full[..., 6] = np.pi - obj_trajs_full[..., 6]  # heading
@@ -250,7 +245,7 @@ class WaymoDataset(DatasetTemplate):
             all_polylines[:, 4] *= -1  # dir_y
             map_infos['all_polylines'] = all_polylines
 
-        return obj_trajs_full, map_infos, flip_y
+        return obj_trajs_full, map_infos
 
     def get_interested_agents(self, track_index_to_predict, obj_trajs_full, current_time_index, obj_types, scene_id):
         center_objects_list = []
