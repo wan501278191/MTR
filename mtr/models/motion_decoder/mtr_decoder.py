@@ -113,6 +113,7 @@ class MTRDecoder(nn.Module):
                 nn.ReLU(),
                 nn.Linear(self.d_model, self.d_model),
             )
+            self.kinematic_gate = nn.Linear(self.d_model, self.d_model)
 
         # P1-7: GRU temporal trend encoder for center object history
         self.use_temporal_trend = self.model_cfg.get('USE_TEMPORAL_TREND', True)
@@ -130,6 +131,7 @@ class MTRDecoder(nn.Module):
                 nn.ReLU(),
                 nn.Linear(self.d_model, self.d_model),
             )
+            self.temporal_gate = nn.Linear(self.d_model, self.d_model)
 
         self.forward_ret_dict = {}
 
@@ -241,34 +243,44 @@ class MTRDecoder(nn.Module):
                 for obj_idx in range(num_center_objects)], dim=0)
             intention_points = intention_points.permute(1, 0, 2)  # (num_query, num_center_objects, 2)
 
-            # P1-5: base query from learnable embeddings (fallback to sine pos encoding)
-            if self.use_learnable_query:
-                # (num_query, d_model) -> (num_query, num_center_objects, d_model)
-                intention_query = self.learnable_query_emb.unsqueeze(1).expand(
-                    -1, num_center_objects, -1).contiguous()
-            else:
-                intention_query = position_encoding_utils.gen_sineembed_for_position(
-                    intention_points, hidden_dim=self.d_model)
-                intention_query = self.intention_query_mlps(
-                    intention_query.view(-1, self.d_model)).view(
-                    -1, num_center_objects, self.d_model)
+            # Sync intention points with data augmentation horizontal flip (negate y)
+            if input_dict is not None and 'aug_flip_y' in input_dict:
+                flip_y = torch.from_numpy(input_dict['aug_flip_y']).to(self.device)  # (num_center_objects,)
+                if flip_y.any():
+                    flip_mask = flip_y.view(1, -1, 1)  # (1, N, 1)
+                    intention_points = torch.where(
+                        flip_mask,
+                        intention_points * torch.tensor([1.0, -1.0], device=self.device),
+                        intention_points
+                    )
 
-            # P1-4: inject kinematic features into query
+            # P1-5: spatial position encoding (always preserved for map collection alignment)
+            intention_query = position_encoding_utils.gen_sineembed_for_position(
+                intention_points, hidden_dim=self.d_model)
+            intention_query = self.intention_query_mlps(
+                intention_query.view(-1, self.d_model)).view(
+                -1, num_center_objects, self.d_model)
+
+            # P1-5: AUGMENT (not replace) with learnable semantic embeddings
+            if self.use_learnable_query:
+                learnable_emb = self.learnable_query_emb.unsqueeze(1).expand(
+                    -1, num_center_objects, -1).contiguous()
+                intention_query = intention_query + learnable_emb
+
+            # P1-4: gated kinematic feature injection (gate controls per-query modulation)
             if self.use_kinematic_query and center_objects_feature is not None:
-                # center_objects_feature: (num_center_objects, C) from context encoder
-                # Extract kinematic features from input_dict if available
                 kinematic_feat = self._extract_kinematic_features(
                     input_dict, num_center_objects, center_objects_feature)
-                # kinematic_feat: (num_center_objects, d_model+6)
                 kinematic_emb = self.kinematic_proj(kinematic_feat)  # (num_center_objects, d_model)
-                # Add to each query
-                intention_query = intention_query + kinematic_emb.unsqueeze(0)
+                # Gated: each query independently decides how much kinematic info to use
+                gate = self.kinematic_gate(kinematic_emb).unsqueeze(0)  # (1, N, d_model)
+                intention_query = intention_query + gate * kinematic_emb.unsqueeze(0)
 
-            # P1-7: inject GRU temporal trend into query
+            # P1-7: gated GRU temporal trend injection
             if self.use_temporal_trend and input_dict is not None:
                 temporal_emb = self._encode_temporal_trend(input_dict, num_center_objects)
-                # temporal_emb: (num_center_objects, d_model)
-                intention_query = intention_query + temporal_emb.unsqueeze(0)
+                gate_t = self.temporal_gate(temporal_emb).unsqueeze(0)  # (1, N, d_model)
+                intention_query = intention_query + gate_t * temporal_emb.unsqueeze(0)
 
         return intention_query, intention_points
 

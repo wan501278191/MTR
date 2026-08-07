@@ -78,9 +78,23 @@ class SwanLabWriter:
     def flush(self):
         pass
 
-    def close(self):
+    def close(self, timeout=30):
         if self._initialized:
-            self._swanlab.finish()
+            import threading
+            result = {}
+            def _finish():
+                try:
+                    self._swanlab.finish()
+                    result['ok'] = True
+                except Exception as e:
+                    result['error'] = str(e)
+            t = threading.Thread(target=_finish, daemon=True)
+            t.start()
+            t.join(timeout=timeout)
+            if t.is_alive():
+                print(f'[SwanLab] finish() timed out after {timeout}s, forcing exit', flush=True)
+            elif 'error' in result:
+                print(f'[SwanLab] finish() error: {result["error"]}', flush=True)
             self._initialized = False
 
     @staticmethod

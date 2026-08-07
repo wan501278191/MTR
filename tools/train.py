@@ -296,13 +296,16 @@ def main():
     logger.info('**********************End evaluation %s/%s(%s)**********************' %
                 (cfg.EXP_GROUP_PATH, cfg.TAG, args.extra_tag))
 
-    # Close tensorboard writers cleanly to avoid RuntimeError at interpreter shutdown
+    # Close tensorboard writers cleanly (with timeout to avoid blocking on slow upload)
     if tb_log is not None:
-        tb_log.close()
+        tb_log.close(timeout=30)
 
-    # Clean up distributed process group to release GPU resources
+    # Clean up distributed process group to release GPU resources (always run)
     if dist_train:
-        dist.destroy_process_group()
+        try:
+            dist.destroy_process_group()
+        except Exception:
+            pass
 
 
 if __name__ == '__main__':

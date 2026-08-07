@@ -1,5 +1,5 @@
 # 8卡分布式训练，全量数据，50 epoch
-# P0+P1优化版（可学习意图查询 + 运动学注入 + GRU时序编码 + 软分配 + 机动辅助头）
+# P1-fix + flip_y对齐: 可学习查询增强 + 门控运动学/时序注入 + 意图点翻转对齐 + 软分配 + 机动辅助头
 
 # 清理残留 GPU 进程，避免 OOM
 echo "========== 清理残留进程 =========="
@@ -9,9 +9,9 @@ sleep 2
 echo "========== 检查 GPU 状态 =========="
 nvidia-smi --query-gpu=memory.used,memory.total --format=csv,noheader 2>/dev/null || echo "nvidia-smi not available"
 
-echo "========== 开始训练 (opt_v2, 50 epoch, batch_size=64) =========="
+echo "========== 开始训练 (opt_v4, 50 epoch, batch_size=64, 数据增强+意图点对齐) =========="
 bash scripts/dist_train.sh 8 \
     --cfg_file cfgs/waymo/mtr_voyah_data.yaml \
     --batch_size 64 \
     --epochs 50 \
-    --extra_tag opt_v2
+    --extra_tag opt_v4
