@@ -90,26 +90,13 @@ def build_scheduler(optimizer, dataloader, opt_cfg, total_epochs, total_iters_ea
         return max(cur_decay, opt_cfg.LR_CLIP / opt_cfg.LR)
 
     if opt_cfg.get('SCHEDULER', None) == 'cosine':
-        total_iters = total_iters_each_epoch * total_epochs
-        warmup_iters = min(500, total_iters // 10)  # 500 iter warmup or 10% of total
-        base_lr = opt_cfg.LR
-        eta_min = opt_cfg.LR_CLIP
-
-        def cosine_warmup_lr_fn(step):
-            """Single LambdaLR: linear warmup -> cosine annealing -> eta_min."""
-            if step < warmup_iters:
-                # Linear warmup: 1% -> 100%
-                return 0.01 + 0.99 * step / warmup_iters
-            else:
-                # Cosine annealing from warmup_iters to total_iters
-                progress = (step - warmup_iters) / max(total_iters - warmup_iters, 1)
-                return max(eta_min / base_lr, (1 + math.cos(math.pi * progress)) / 2)
-
-        # When resuming (last_epoch >= 0), LambdaLR requires initial_lr in param_groups
-        if last_epoch >= 0:
-            for g in optimizer.param_groups:
-                g.setdefault('initial_lr', opt_cfg.LR)
-        scheduler = lr_sched.LambdaLR(optimizer, lr_lambda=cosine_warmup_lr_fn, last_epoch=last_epoch)
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
+            optimizer,
+            T_0=2 * len(dataloader),
+            T_mult=1,
+            eta_min=max(1e-2 * opt_cfg.LR, 1e-6),
+            last_epoch=last_epoch,
+        )
     elif opt_cfg.get('SCHEDULER', None) == 'lambdaLR':
         scheduler = lr_sched.LambdaLR(optimizer, lr_lbmd, last_epoch=last_epoch)
     elif opt_cfg.get('SCHEDULER', None) == 'linearLR':

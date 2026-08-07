@@ -504,9 +504,6 @@ class MTRDecoder(nn.Module):
             pred_trajs_final = pred_trajs
             pred_scores_final = pred_scores
 
-        # Re-normalize scores over selected modes so they sum to 1
-        pred_scores_final = pred_scores_final / (pred_scores_final.sum(dim=-1, keepdim=True) + 1e-8)
-
         return pred_scores_final, pred_trajs_final
 
     def forward(self, batch_dict):
