@@ -78,6 +78,16 @@ class MTRDecoder(nn.Module):
             in_channels=self.d_model, hidden_size=self.d_model, num_decoder_layers=self.num_decoder_layers
         )
 
+        # P0-B: timestamp loss weight (linear ramp, emphasize far-future frames)
+        ts_weight_cfg = self.model_cfg.get('TIMESTAMP_LOSS_WEIGHT', None)
+        if ts_weight_cfg is not None:
+            ts_start = ts_weight_cfg.get('START', 1.0)
+            ts_end = ts_weight_cfg.get('END', 2.0)
+            ts_weight = torch.linspace(ts_start, ts_end, self.num_future_frames)
+            self.timestamp_loss_weight = ts_weight  # (num_future_frames,)
+        else:
+            self.timestamp_loss_weight = None
+
         self.forward_ret_dict = {}
 
     def build_dense_future_prediction_layers(self, hidden_dim, num_future_frames):
@@ -400,7 +410,7 @@ class MTRDecoder(nn.Module):
                 pred_scores=pred_scores, pred_trajs=pred_trajs_gmm,
                 gt_trajs=center_gt_trajs[:, :, 0:2], gt_valid_mask=center_gt_trajs_mask,
                 pre_nearest_mode_idxs=center_gt_positive_idx,
-                timestamp_loss_weight=None, use_square_gmm=False,
+                timestamp_loss_weight=self.timestamp_loss_weight, use_square_gmm=False,
             )
 
             pred_vel = pred_vel[torch.arange(num_center_objects), center_gt_positive_idx]
