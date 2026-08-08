@@ -79,14 +79,15 @@ class MTRDecoder(nn.Module):
         )
 
         # P0-B: timestamp loss weight (linear ramp, emphasize far-future frames)
+        # Registered as buffer so it moves with .to(device) / DDP automatically
         ts_weight_cfg = self.model_cfg.get('TIMESTAMP_LOSS_WEIGHT', None)
         if ts_weight_cfg is not None:
             ts_start = ts_weight_cfg.get('START', 1.0)
             ts_end = ts_weight_cfg.get('END', 2.0)
             ts_weight = torch.linspace(ts_start, ts_end, self.num_future_frames)
-            self.timestamp_loss_weight = ts_weight  # (num_future_frames,)
         else:
-            self.timestamp_loss_weight = None
+            ts_weight = torch.ones(self.num_future_frames)
+        self.register_buffer('timestamp_loss_weight', ts_weight, persistent=False)
 
         self.forward_ret_dict = {}
 
