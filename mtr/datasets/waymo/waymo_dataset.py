@@ -32,6 +32,18 @@ class WaymoDataset(DatasetTemplate):
         infos = src_infos[::self.dataset_cfg.SAMPLE_INTERVAL[self.mode]]
         self.logger.info(f'Total scenes before filters: {len(infos)}')
 
+        # P1-B: Oversample scenes containing CYCLIST (rarest category, 8s mAP=0.284)
+        cyclist_oversample = self.dataset_cfg.get('CYCLIST_OVERSAMPLE', 0)
+        if self.training and cyclist_oversample > 0:
+            cyclist_infos = []
+            for info in infos:
+                obj_types = info['tracks_to_predict'].get('object_type', [])
+                if 'TYPE_CYCLIST' in obj_types:
+                    cyclist_infos.append(info)
+            infos = infos + cyclist_infos * cyclist_oversample
+            np.random.shuffle(infos)
+            self.logger.info(f'After CYCLIST oversample x{cyclist_oversample}: {len(infos)} scenes')
+
         for func_name, val in self.dataset_cfg.INFO_FILTER_DICT.items():
             infos = getattr(self, func_name)(infos, val)
 
@@ -97,7 +109,8 @@ class WaymoDataset(DatasetTemplate):
         obj_trajs_future = obj_trajs_full[:, current_time_index + 1:]
 
         if self.training and self.dataset_cfg.get('DATA_AUGMENTATION', False):
-            obj_trajs_full, info['map_infos'] = self.apply_data_augmentation(obj_trajs_full, info['map_infos'])
+            obj_trajs_full, info['map_infos'] = self.apply_data_augmentation(
+                obj_trajs_full, info['map_infos'], obj_types=list(info['tracks_to_predict']['object_type']))
             obj_trajs_past = obj_trajs_full[:, :current_time_index + 1]
             obj_trajs_future = obj_trajs_full[:, current_time_index + 1:]
 
@@ -206,12 +219,13 @@ class WaymoDataset(DatasetTemplate):
             obj_trajs_future_state, obj_trajs_future_mask, center_gt_trajs, center_gt_trajs_mask, center_gt_final_valid_idx,
             track_index_to_predict_new, sdc_track_index_new, obj_types, obj_ids)
 
-    def apply_data_augmentation(self, obj_trajs_full, map_infos):
+    def apply_data_augmentation(self, obj_trajs_full, map_infos, obj_types=None):
         """Apply random rotation and horizontal flip to world coordinates.
 
         Args:
             obj_trajs_full (np.ndarray): (num_objects, num_timestamps, 10) [x, y, z, l, w, h, heading, vx, vy, valid]
             map_infos (dict): contains 'all_polylines' (num_points, 7) [x, y, z, dx, dy, dz, type]
+            obj_types (list): object types for each agent, used to control flip augmentation
 
         Returns:
             augmented obj_trajs_full, map_infos
@@ -233,8 +247,11 @@ class WaymoDataset(DatasetTemplate):
         all_polylines[:, 3:5] = all_polylines[:, 3:5] @ rot_matrix.T
         map_infos['all_polylines'] = all_polylines
 
-        # Random horizontal flip (negate y)
-        if np.random.rand() > 0.5:
+        # P1-A: Random horizontal flip - skip when VEHICLE is a center object
+        # (VEHICLE intention points are y-asymmetric, flip breaks GT-endpoint matching)
+        flip_enabled = self.dataset_cfg.get('FLIP_AUGMENTATION', True)
+        has_vehicle = obj_types is not None and 'TYPE_VEHICLE' in obj_types
+        if flip_enabled and not has_vehicle and np.random.rand() > 0.5:
             obj_trajs_full[..., 1] *= -1  # y
             obj_trajs_full[..., 3] *= -1  # dy
             obj_trajs_full[..., 6] = np.pi - obj_trajs_full[..., 6]  # heading

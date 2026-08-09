@@ -31,6 +31,10 @@ DATA_CONFIG:
     NUM_OF_SRC_POLYLINES: 768
     CENTER_OFFSET_OF_MAP: &center_offset [30.0, 0]
 
+    DATA_AUGMENTATION: True  # P1: rotation always on, flip only for non-VEHICLE scenes
+    FLIP_AUGMENTATION: True  # P1-A: flip enabled but skipped when VEHICLE is center object
+    CYCLIST_OVERSAMPLE: 2   # P1-B: duplicate CYCLIST scenes 2x
+
 
 
 MODEL:
@@ -82,20 +86,19 @@ MODEL:
 
         NMS_DIST_THRESH: 2.5
 
-        TIMESTAMP_LOSS_WEIGHT: {START: 1.0, END: 1.2}  # P0-B: linear ramp, emphasize 8s frames
 
 
 OPTIMIZATION:
     BATCH_SIZE_PER_GPU: 10
-    #NUM_EPOCHS: 50
-    NUM_EPOCHS: 50
+    #NUM_EPOCHS: 30
+    NUM_EPOCHS: 30
 
     OPTIMIZER: AdamW
     LR: 0.0001
     WEIGHT_DECAY: 0.01
 
     SCHEDULER: lambdaLR
-    DECAY_STEP_LIST: [30, 40, 45, 48]
+    DECAY_STEP_LIST: [22, 24, 26, 28]
     LR_DECAY: 0.5
     LR_CLIP: 0.000001
 
