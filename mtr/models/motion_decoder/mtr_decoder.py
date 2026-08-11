@@ -414,7 +414,7 @@ class MTRDecoder(nn.Module):
             weight_reg = self.model_cfg.LOSS_WEIGHTS.get('reg', 1.0)
             weight_vel = self.model_cfg.LOSS_WEIGHTS.get('vel', 0.2)
 
-            layer_loss = loss_reg_gmm * weight_reg + loss_reg_vel * weight_vel + loss_cls.sum(dim=-1) * weight_cls
+            layer_loss = loss_reg_gmm * weight_reg + loss_reg_vel * weight_vel + loss_cls.mean(dim=-1) * weight_cls
             layer_loss = layer_loss.mean()
             total_loss += layer_loss
             tb_dict[f'{tb_pre_tag}loss_layer{layer_idx}'] = layer_loss.item()
