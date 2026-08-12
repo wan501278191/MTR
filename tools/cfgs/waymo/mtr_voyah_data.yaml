@@ -77,7 +77,7 @@ MODEL:
         LOSS_WEIGHTS: {
             'cls': 1.0, 
             'reg': 1.0, 
-            'vel': 0.2
+            'vel': 0.5
         }
 
         NMS_DIST_THRESH: 2.5
