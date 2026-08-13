@@ -24,36 +24,41 @@ from mtr.datasets import build_dataloader
 
 def collect_gt_endpoints(cfg):
     """Collect GT final endpoints from training set."""
-    dataset = build_dataloader(
+    logger = logging.getLogger('gen_intention')
+    logger.setLevel(logging.INFO)
+    handler = logging.StreamHandler()
+    handler.setFormatter(logging.Formatter('%(message)s'))
+    logger.addHandler(handler)
+
+    train_set, _, _ = build_dataloader(
         dataset_cfg=cfg.DATA_CONFIG,
-        class_names=cfg.CLASS_NAMES,
         batch_size=1,
         dist=False,
         workers=4,
-        logger=logging.getLogger(),
-        training=False,
-    )[0]
+        logger=logger,
+        training=True,
+    )
 
-    endpoints = {name: [] for name in cfg.CLASS_NAMES}
-    total = 0
-    for idx in range(len(dataset)):
-        data = dataset[idx]
-        obj_types = data['center_objects_type']        # (num_center_objects,)
-        gt_trajs = data['center_gt_trajs']              # (num_center_objects, num_future_timestamps, 4)
-        gt_mask = data['center_gt_trajs_mask']          # (num_center_objects, num_future_timestamps)
-        center_gt_final_valid_idx = data['center_gt_final_valid_idx']  # (num_center_objects,)
+    class_names = cfg.DATA_CONFIG.OBJECT_TYPE
+    endpoints = {name: [] for name in class_names}
+    total = len(train_set)
+
+    for idx in range(total):
+        data = train_set[idx]
+        obj_types = data['center_objects_type']
+        gt_trajs = data['center_gt_trajs']          # (num_center_objects, num_future_timestamps, 4)
+        gt_mask = data['center_gt_trajs_mask']      # (num_center_objects, num_future_timestamps)
+        center_gt_final_valid_idx = data['center_gt_final_valid_idx']
 
         for i, obj_type in enumerate(obj_types):
-            # Use the last valid timestamp as endpoint
             final_idx = int(center_gt_final_valid_idx[i])
             if final_idx < 0 or gt_mask[i, final_idx] == 0:
                 continue
-            endpoint = gt_trajs[i, final_idx, 0:2]  # (x, y) relative to center object
+            endpoint = gt_trajs[i, final_idx, 0:2]
             endpoints[str(obj_type)].append(endpoint)
 
-        total += 1
-        if total % 2000 == 0:
-            print(f"  Processed {total} / {len(dataset)} scenarios")
+        if (idx + 1) % 2000 == 0:
+            print(f"  Processed {idx+1} / {total} scenarios")
 
     print(f"  Total {total} scenarios, endpoints collected:")
     for k, v in endpoints.items():
@@ -70,12 +75,10 @@ def cluster_with_clip(endpoints, percentile=90, num_clusters=64):
             result[obj_type] = pts
             continue
 
-        # Percentile clip: remove extreme outliers
         lower = np.percentile(pts, 100 - percentile, axis=0)
         upper = np.percentile(pts, percentile, axis=0)
         clipped = np.clip(pts, lower, upper)
 
-        # K-means
         km = KMeans(n_clusters=num_clusters, random_state=666, n_init=10)
         km.fit(clipped)
         result[obj_type] = km.cluster_centers_.astype(np.float32)
@@ -98,7 +101,15 @@ def main():
     parser.add_argument('--output', type=str, default='../data/waymo/cluster_64_center_dict.pkl')
     args = parser.parse_args()
 
-    cfg_path = Path(__file__).resolve().parent.parent / args.cfg_file
+    # Resolve cfg_file relative to tools/ directory (where this script lives)
+    script_dir = Path(__file__).resolve().parent
+    cfg_path = script_dir / args.cfg_file
+    if not cfg_path.exists():
+        # try relative to project root
+        cfg_path = script_dir.parent / args.cfg_file
+    if not cfg_path.exists():
+        cfg_path = Path(args.cfg_file)
+
     cfg_from_yaml_file(cfg_path, cfg)
 
     print(f"Step 1: Collecting GT endpoints (percentile={args.percentile})...")
@@ -108,6 +119,8 @@ def main():
     result = cluster_with_clip(endpoints, percentile=args.percentile, num_clusters=args.num_clusters)
 
     out_path = Path(args.output)
+    if not out_path.is_absolute():
+        out_path = script_dir / args.output
     if out_path.exists():
         bak = out_path.with_suffix('.pkl.bak')
         if not bak.exists():
