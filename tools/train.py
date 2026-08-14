@@ -171,6 +171,7 @@ def main():
         model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
     model = model.to(torch.device('cuda' if torch.cuda.is_available() else 'cpu'))
 
+    ema = EMA(model, decay=0.999) if cfg.OPTIMIZATION.get('USE_EMA', True) else None
     optimizer = build_optimizer(model, cfg.OPTIMIZATION)
 
     # load checkpoint if it is possible
@@ -251,7 +252,8 @@ def main():
         eval_output_dir=eval_output_dir,
         test_loader=test_loader if not args.not_eval_with_train else None,
         cfg=cfg, dist_train=dist_train, logger_iter_interval=args.logger_iter_interval,
-        ckpt_save_time_interval=args.ckpt_save_time_interval
+        ckpt_save_time_interval=args.ckpt_save_time_interval,
+        ema=ema
     )
 
     logger.info('**********************End training %s/%s(%s)**********************\n\n\n'

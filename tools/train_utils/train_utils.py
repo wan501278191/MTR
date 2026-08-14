@@ -11,9 +11,42 @@ import tqdm
 from torch.nn.utils import clip_grad_norm_
 
 
+class EMA:
+    """Exponential Moving Average of model parameters."""
+    def __init__(self, model, decay=0.999):
+        self.decay = decay
+        self.shadow = {}
+        self.backup = {}
+        for name, param in model.named_parameters():
+            if param.requires_grad:
+                self.shadow[name] = param.data.clone()
+
+    def update(self, model):
+        for name, param in model.named_parameters():
+            if param.requires_grad:
+                assert name in self.shadow
+                new_average = self.decay * self.shadow[name] + (1.0 - self.decay) * param.data
+                self.shadow[name] = new_average.clone()
+
+    def apply_shadow(self, model):
+        for name, param in model.named_parameters():
+            if param.requires_grad:
+                assert name in self.shadow
+                self.backup[name] = param.data.clone()
+                param.data = self.shadow[name].clone()
+
+    def restore(self, model):
+        for name, param in model.named_parameters():
+            if param.requires_grad and name in self.backup:
+                param.data = self.backup[name].clone()
+        self.backup = {}
+
+
+
+
 def train_one_epoch(model, optimizer, train_loader, accumulated_iter, optim_cfg,
                     rank, tbar, total_it_each_epoch, dataloader_iter, tb_log=None, leave_pbar=False, scheduler=None, show_grad_curve=False,
-                    logger=None, logger_iter_interval=50, cur_epoch=None, total_epochs=None, ckpt_save_dir=None, ckpt_save_time_interval=300):
+                    logger=None, logger_iter_interval=50, cur_epoch=None, total_epochs=None, ckpt_save_dir=None, ckpt_save_time_interval=300, ema=None):
     if total_it_each_epoch == len(train_loader):
         dataloader_iter = iter(train_loader)
 
@@ -50,6 +83,9 @@ def train_one_epoch(model, optimizer, train_loader, accumulated_iter, optim_cfg,
         total_norm = clip_grad_norm_(model.parameters(), optim_cfg.GRAD_NORM_CLIP)
 
         optimizer.step()
+
+        if ema is not None:
+            ema.update(model)
 
         if optimizer_2 is not None:
             optimizer_2.step()
@@ -197,11 +233,15 @@ def train_model(model, optimizer, train_loader, optim_cfg,
                 from eval_utils.eval_utils import eval_one_epoch
 
                 pure_model = model
+                if ema is not None:
+                    ema.apply_shadow(model)
                 torch.cuda.empty_cache()
                 tb_dict = eval_one_epoch(
                     cfg, pure_model, test_loader, epoch_id=trained_epoch, logger=logger, dist_test=dist_train,
                     result_dir=eval_output_dir, save_to_file=False, logger_iter_interval=max(logger_iter_interval // 5, 1)
                 )
+                if ema is not None:
+                    ema.restore(model)
                 if cfg.LOCAL_RANK == 0:
                     # === 3. 评估结果 (eval.*) — 所有时间点总览优先，再分时间点细项 ===
                     ordered_keys = []
@@ -245,32 +285,33 @@ def train_model(model, optimizer, train_loader, optim_cfg,
                         tb_log.add_scalar(tag, val, trained_epoch)
 
                     if 'mAP' in tb_dict:
+                        # Composite score: prioritize ADE/FDE (lower=better), then mAP (higher=better)
+                        # score = mAP - ADE - FDE  (higher is better)
+                        composite_score = tb_dict.get('mAP', 0) - tb_dict.get('minADE', 0) - tb_dict.get('minFDE', 0)
                         best_record_file = eval_output_dir / ('best_eval_record.txt')
 
                         try:
                             with open(best_record_file, 'r') as f:
                                 best_src_data = f.readlines()
-
-                            best_performance = best_src_data[-1].strip().split(' ')[-1]  # best_epoch_xx MissRate 0.xx
-                            best_performance = float(best_performance)
+                            # Parse: best_epoch_xx score -x.xxx
+                            best_performance = float(best_src_data[-1].strip().split(' ')[-1])
                         except:
                             with open(best_record_file, 'a') as f:
                                 pass
-                            best_performance = -1
-
+                            best_performance = -999.0
 
                         with open(best_record_file, 'a') as f:
-                            print(f'epoch_{trained_epoch} mAP {tb_dict["mAP"]}', file=f)
+                            print(f'epoch_{trained_epoch} score {composite_score:.4f} mAP {tb_dict.get("mAP", 0):.4f} ADE {tb_dict.get("minADE", 0):.4f} FDE {tb_dict.get("minFDE", 0):.4f}', file=f)
 
-                        if best_performance == -1 or tb_dict['mAP'] > float(best_performance):
+                        if composite_score > best_performance:
                             ckpt_name = ckpt_save_dir / 'best_model'
                             save_checkpoint(
                                 checkpoint_state(model, epoch=cur_epoch, it=accumulated_iter), filename=ckpt_name,
                             )
-                            logger.info(f'Save best model to {ckpt_name}')
+                            logger.info(f'Save best model (score={composite_score:.4f}, mAP={tb_dict.get("mAP",0):.4f}, ADE={tb_dict.get("minADE",0):.4f}, FDE={tb_dict.get("minFDE",0):.4f}) to {ckpt_name}')
 
                             with open(best_record_file, 'a') as f:
-                                print(f'best_epoch_{trained_epoch} mAP {tb_dict["mAP"]}', file=f)
+                                print(f'best_epoch_{trained_epoch} score {composite_score:.4f}', file=f)
                         else:
                             with open(best_record_file, 'a') as f:
                                 print(f'{best_src_data[-1].strip()}', file=f)

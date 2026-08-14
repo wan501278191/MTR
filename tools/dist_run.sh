@@ -1,9 +1,9 @@
-# 8卡分布式训练，全量数据，50 epoch
-# P5+P6: 百分位裁剪重新聚类意图点 + 修正LR schedule
+# 8卡分布式训练，全量数据，80 epoch
+# 优化minADE/minFDE: 原始Waymo意图点 + 80ep + EMA + reg loss 1.5 + batch_size=64
 bash scripts/dist_train.sh 8 \
     --cfg_file cfgs/waymo/mtr_voyah_data.yaml \
     --batch_size 64 \
-    --epochs 50 \
+    --epochs 80 \
     --fix_random_seed \
     --workers 0 \
-    --extra_tag p5_pct90_lrsched
+    --extra_tag opt_adefde_v1
