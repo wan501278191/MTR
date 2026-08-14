@@ -21,7 +21,7 @@ from mtr.config import cfg, cfg_from_list, cfg_from_yaml_file, log_config_to_fil
 from mtr.utils import common_utils
 from mtr.models import model as model_utils
 
-from train_utils.train_utils import train_model
+from train_utils.train_utils import train_model, EMA
 
 
 def parse_config():
