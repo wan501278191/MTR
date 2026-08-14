@@ -171,7 +171,6 @@ def main():
         model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
     model = model.to(torch.device('cuda' if torch.cuda.is_available() else 'cpu'))
 
-    ema = EMA(model, decay=0.999) if cfg.OPTIMIZATION.get('USE_EMA', True) else None
     optimizer = build_optimizer(model, cfg.OPTIMIZATION)
 
     # load checkpoint if it is possible
@@ -216,6 +215,7 @@ def main():
 
     if dist_train:
         model = nn.parallel.DistributedDataParallel(model, device_ids=[cfg.LOCAL_RANK % torch.cuda.device_count()], find_unused_parameters=True)
+    ema = EMA(model, decay=0.999) if cfg.OPTIMIZATION.get('USE_EMA', True) else None
     logger.info(model)
     num_total_params = sum([x.numel() for x in model.parameters()])
     logger.info(f'Total number of parameters: {num_total_params}')
