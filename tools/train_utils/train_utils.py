@@ -181,7 +181,7 @@ def train_model(model, optimizer, train_loader, optim_cfg,
                 start_epoch, total_epochs, start_iter, rank, ckpt_save_dir, train_sampler=None,
                 ckpt_save_interval=1, max_ckpt_save_num=50, merge_all_iters_to_one_epoch=False, tb_log=None,
                 scheduler=None, test_loader=None, logger=None, eval_output_dir=None, cfg=None, dist_train=False,
-                logger_iter_interval=50, ckpt_save_time_interval=300):
+                logger_iter_interval=50, ckpt_save_time_interval=300, ema=None):
     accumulated_iter = start_iter
     with tqdm.trange(start_epoch, total_epochs, desc='epochs', dynamic_ncols=True, leave=(rank == 0)) as tbar:
         total_it_each_epoch = len(train_loader)
@@ -209,7 +209,8 @@ def train_model(model, optimizer, train_loader, optim_cfg,
                 dataloader_iter=dataloader_iter,
                 scheduler=scheduler, cur_epoch=cur_epoch, total_epochs=total_epochs,
                 logger=logger, logger_iter_interval=logger_iter_interval,
-                ckpt_save_dir=ckpt_save_dir, ckpt_save_time_interval=ckpt_save_time_interval
+                ckpt_save_dir=ckpt_save_dir, ckpt_save_time_interval=ckpt_save_time_interval,
+                ema=ema
             )
 
             # save trained model
