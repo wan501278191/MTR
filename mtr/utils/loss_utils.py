@@ -87,12 +87,17 @@ def awta_nll_loss_gmm(pred_scores, pred_trajs, gt_trajs, gt_valid_mask,
                       log_std_range=(-1.609, 5.0), rho_limit=0.5):
     """Annealed Winner-Takes-All GMM NLL loss.
 
-    Unlike ``nll_loss_gmm_direct`` which only backprops through the nearest
-    mode, this computes the GMM NLL for *every* mode and produces a softmax
-    (over modes) weighted combination using ``-nll / temperature`` as logits.
+    Combines:
+      1. Standard GMM NLL for the nearest mode (identical to
+         ``nll_loss_gmm_direct``) — the stable, well-behaved regression loss.
+      2. Distance-weighted auxiliary loss for ALL modes using **distance**
+         (bounded 0-~100 m) rather than NLL (unbounded) for the softmax
+         weighting.  Weights are detached so gradients flow through each
+         mode's own NLL only.
 
-    As ``temperature -> 0`` the weighting concentrates on the best mode,
-    recovering the standard WTA behaviour.
+    At high temperature the auxiliary term encourages all modes to
+    participate (preventing mode collapse).  As temperature -> 0 the
+    weighting concentrates on the best mode, recovering standard WTA.
     """
     if use_square_gmm:
         assert pred_trajs.shape[-1] == 3
@@ -101,7 +106,7 @@ def awta_nll_loss_gmm(pred_scores, pred_trajs, gt_trajs, gt_valid_mask,
 
     batch_size, num_modes = pred_scores.shape[0], pred_trajs.shape[1]
 
-    # distance of every mode to GT (used for nearest-mode bookkeeping only)
+    # per-mode distance (bounded, stable)
     distance = (pred_trajs[:, :, :, 0:2] - gt_trajs[:, None, :, :]).norm(dim=-1)  # (B, M, T)
     distance = (distance * gt_valid_mask[:, None, :]).sum(dim=-1)  # (B, M)
 
@@ -110,37 +115,47 @@ def awta_nll_loss_gmm(pred_scores, pred_trajs, gt_trajs, gt_valid_mask,
     else:
         nearest_mode_idxs = distance.argmin(dim=-1)
 
-    # broadcast GT to all modes: (B, M, T, 2)
-    gt_expanded = gt_trajs[:, None, :, :].expand(-1, num_modes, -1, -1)
-    res_trajs = gt_expanded - pred_trajs[:, :, :, 0:2]  # (B, M, T, 2)
-    dx = res_trajs[..., 0]
-    dy = res_trajs[..., 1]
+    # --- Part 1: standard GMM NLL for nearest mode only ---
+    nearest_bs = torch.arange(batch_size).type_as(nearest_mode_idxs)
+    nearest_trajs = pred_trajs[nearest_bs, nearest_mode_idxs]  # (B, T, 5)
+    res_trajs = gt_trajs - nearest_trajs[:, :, 0:2]  # (B, T, 2)
+    dx = res_trajs[:, :, 0]
+    dy = res_trajs[:, :, 1]
 
     if use_square_gmm:
-        log_std1 = log_std2 = torch.clip(pred_trajs[:, :, :, 2], min=log_std_range[0], max=log_std_range[1])
+        log_std1 = log_std2 = torch.clip(nearest_trajs[:, :, 2], min=log_std_range[0], max=log_std_range[1])
         std1 = std2 = torch.exp(log_std1)
         rho = torch.zeros_like(log_std1)
     else:
-        log_std1 = torch.clip(pred_trajs[:, :, :, 2], min=log_std_range[0], max=log_std_range[1])
-        log_std2 = torch.clip(pred_trajs[:, :, :, 3], min=log_std_range[0], max=log_std_range[1])
+        log_std1 = torch.clip(nearest_trajs[:, :, 2], min=log_std_range[0], max=log_std_range[1])
+        log_std2 = torch.clip(nearest_trajs[:, :, 3], min=log_std_range[0], max=log_std_range[1])
         std1 = torch.exp(log_std1)
         std2 = torch.exp(log_std2)
-        rho = torch.clip(pred_trajs[:, :, :, 4], min=-rho_limit, max=rho_limit)
+        rho = torch.clip(nearest_trajs[:, :, 4], min=-rho_limit, max=rho_limit)
 
     gt_valid_mask_f = gt_valid_mask.type_as(pred_scores)
     if timestamp_loss_weight is not None:
         gt_valid_mask_f = gt_valid_mask_f * timestamp_loss_weight[None, :]
 
-    # per-mode, per-timestamp NLL  (B, M, T)
     reg_gmm_log_coefficient = log_std1 + log_std2 + 0.5 * torch.log(1 - rho ** 2)
     reg_gmm_exp = (0.5 * 1 / (1 - rho ** 2)) * (
         (dx ** 2) / (std1 ** 2) + (dy ** 2) / (std2 ** 2) - 2 * rho * dx * dy / (std1 * std2)
     )
-    nll_per_mode = ((reg_gmm_log_coefficient + reg_gmm_exp) * gt_valid_mask_f[:, None, :]).sum(dim=-1)  # (B, M)
+    reg_loss = ((reg_gmm_log_coefficient + reg_gmm_exp) * gt_valid_mask_f).sum(dim=-1)  # (B,)
 
-    # annealed softmax weights over modes
-    weights = torch.softmax(-nll_per_mode / max(temperature, 1e-6), dim=1)  # (B, M)
+    # --- Part 2: aWTA auxiliary — distance-weighted regression for ALL modes ---
+    # Use distance (bounded) for softmax weighting, NOT NLL (unbounded)
+    # Clamp distance to avoid extreme values
+    dist_clamped = distance.clamp(max=100.0)
+    weights = torch.softmax(-dist_clamped / max(temperature, 1e-6), dim=1).detach()  # (B, M), detached
 
-    reg_loss = (weights * nll_per_mode).sum(dim=1)  # (B,)
+    # per-mode L2 distance loss (bounded, stable)
+    aux_loss = (weights * dist_clamped).sum(dim=1)  # (B,)
+
+    # scale auxiliary to be comparable to GMM NLL (divide by num_valid_timestamps)
+    num_valid = gt_valid_mask_f.sum(dim=-1).clamp_min(1.0)  # (B,)
+    aux_loss = aux_loss / num_valid * 0.1  # small weight
+
+    reg_loss = reg_loss + aux_loss
 
     return reg_loss, nearest_mode_idxs
