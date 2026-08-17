@@ -218,25 +218,19 @@ class MTREncoder(nn.Module):
 
 
 class SharedSceneEncoder(nn.Module):
-    """QCNet-style scene-level shared encoder with factorized attention.
+    """QCNet-style scene-level shared encoder with factorized local attention.
 
-    Instead of running one monolithic global self-attention over the joint
-    [agent + map] token set (as ``MTREncoder`` does), this encoder applies
-    three decoupled attention passes:
+    Uses the same KNN-based local attention as ``MTREncoder`` (not global
+    attention) to keep memory usage O(N·K) instead of O(N²).  The factorized
+    structure applies three decoupled passes:
 
-    1. **Agent temporal attention** — agents attend across the agent-token axis
-       (capturing inter-agent relationships).
-    2. **Agent-map cross attention** — agent tokens cross-attend to map tokens
-       (grounding agents in lane / road geometry).
-    3. **Map self attention** — map tokens refine among themselves.
+    1. **Agent self-attention** — agents attend to nearby agents.
+    2. **Map self-attention** — map polylines attend to nearby polylines.
+    3. **Agent-map cross-attention** — agents attend to nearby map polylines.
 
-    Position features use **polar + Fourier** encoding for better spatial
-    generalisation, as recommended in the optimization plan.
-
-    The encoder processes each center-object frame independently (the data
-    pipeline is agent-centric), but the factorised structure is significantly
-    cheaper than full global attention: O(A^2 + A*M + M^2) instead of
-    O((A+M)^2), where A = num_objects and M = num_polylines.
+    All passes are batched across center objects (no per-object loop) and use
+    local attention for memory efficiency.  Polar + Fourier position encoding
+    is optionally injected into polyline features.
     """
 
     def __init__(self, config):
@@ -249,9 +243,7 @@ class SharedSceneEncoder(nn.Module):
         dropout = self.model_cfg.get('DROPOUT_OF_ATTN', 0.1)
         num_attn_layers = self.model_cfg.NUM_ATTN_LAYERS
 
-        # build polyline encoders (reuse MTREncoder's factory logic)
-        self._dummy = nn.Module()
-        self._dummy.model_cfg = config
+        # build polyline encoders
         self.agent_polyline_encoder = self._build_polyline(
             in_channels=self.model_cfg.NUM_INPUT_ATTR_AGENT + 1,
             hidden_dim=self.model_cfg.NUM_CHANNEL_IN_MLP_AGENT,
@@ -265,29 +257,19 @@ class SharedSceneEncoder(nn.Module):
             num_pre_layers=self.model_cfg.NUM_LAYER_IN_PRE_MLP_MAP,
             out_channels=d_model
         )
-        del self._dummy
 
-        # polar + Fourier position encoding
-        self.use_fourier = self.model_cfg.get('USE_FOURIER_POS', False)
-        if self.use_fourier:
-            from mtr.models.utils.polyline_encoder import FourierPositionEncoder
-            self.fourier_pos_enc = FourierPositionEncoder(
-                out_dim=d_model,
-                num_freqs=self.model_cfg.get('FOURIER_NUM_FREQS', 8),
-            )
-        else:
-            self.fourier_pos_enc = None
-
-        # factorized attention layers
-        self.agent_agent_attn_layers = nn.ModuleList([
-            self._build_encoder_layer(d_model, nhead, dropout) for _ in range(num_attn_layers)
+        # factorized local attention layers (reuse MTREncoder's TransformerEncoderLayer)
+        self.agent_attn_layers = nn.ModuleList([
+            self._build_encoder_layer(d_model, nhead, dropout, use_local_attn=True)
+            for _ in range(num_attn_layers)
         ])
-        self.map_self_attn_layers = nn.ModuleList([
-            self._build_encoder_layer(d_model, nhead, dropout) for _ in range(num_attn_layers)
+        self.map_attn_layers = nn.ModuleList([
+            self._build_encoder_layer(d_model, nhead, dropout, use_local_attn=True)
+            for _ in range(num_attn_layers)
         ])
-        # cross attention: agent (query) -> map (key/value)
-        self.agent_map_cross_attn_layers = nn.ModuleList([
-            self._build_cross_attn_layer(d_model, nhead, dropout) for _ in range(num_attn_layers)
+        self.agent_map_attn_layers = nn.ModuleList([
+            self._build_encoder_layer(d_model, nhead, dropout, use_local_attn=True)
+            for _ in range(num_attn_layers)
         ])
 
         self.num_out_channels = d_model
@@ -306,83 +288,56 @@ class SharedSceneEncoder(nn.Module):
             num_pre_layers=num_pre_layers, out_channels=out_channels,
         )
 
-    def _build_encoder_layer(self, d_model, nhead, dropout):
-        """Build a self-attention + FFN block using nn.MultiheadAttention."""
-        layer = nn.Module()
-        layer.self_attn = nn.MultiheadAttention(d_model, nhead, dropout=dropout)
-        layer.linear1 = nn.Linear(d_model, d_model * 4)
-        layer.linear2 = nn.Linear(d_model * 4, d_model)
-        layer.norm1 = nn.LayerNorm(d_model)
-        layer.norm2 = nn.LayerNorm(d_model)
-        layer.dropout1 = nn.Dropout(dropout)
-        layer.dropout2 = nn.Dropout(dropout)
-        layer.activation = nn.functional.relu
-        return layer
+    def _build_encoder_layer(self, d_model, nhead, dropout, use_local_attn=False):
+        return transformer_encoder_layer.TransformerEncoderLayer(
+            d_model=d_model, nhead=nhead, dim_feedforward=d_model * 4,
+            dropout=dropout, normalize_before=False, use_local_attn=use_local_attn,
+        )
 
-    def _build_cross_attn_layer(self, d_model, nhead, dropout):
-        """A single cross-attention + FFN block (agent queries, map keys)."""
-        layer = nn.Module()
-        layer.cross_attn = nn.MultiheadAttention(d_model, nhead, dropout=dropout)
-        layer.linear1 = nn.Linear(d_model, d_model * 4)
-        layer.linear2 = nn.Linear(d_model * 4, d_model)
-        layer.norm1 = nn.LayerNorm(d_model)
-        layer.norm2 = nn.LayerNorm(d_model)
-        layer.dropout1 = nn.Dropout(dropout)
-        layer.dropout2 = nn.Dropout(dropout)
-        layer.activation = nn.functional.relu
-        return layer
+    def _apply_local_attn_batched(self, layers, x, x_mask, x_pos, num_of_neighbors):
+        """Apply stacked local-attention layers, batched across center objects.
 
-    def _apply_self_attn(self, layers, x, x_mask, x_pos):
-        """Apply stacked self-attention + FFN layers.
-
+        Reuses the same KNN logic as MTREncoder.apply_local_attn.
         Args:
-            x: (B, N, C)
-            x_mask: (B, N) bool
-            x_pos: (B, N, 3)
+            x: (num_center_objects, N, C)
+            x_mask: (num_center_objects, N) bool
+            x_pos: (num_center_objects, N, 3)
         """
         assert torch.all(x_mask.sum(dim=-1) > 0)
-        B, N, C = x.shape
-        x_t = x.permute(1, 0, 2)  # (N, B, C)
-        padding_mask = ~x_mask  # (B, N)
-        pos_xy = x_pos[..., 0:2].permute(1, 0, 2)  # (N, B, 2)
-        pos_emb = position_encoding_utils.gen_sineembed_for_position(pos_xy, hidden_dim=C)
+        batch_size, N, d_model = x.shape
 
-        for layer in layers:
-            q = k = x_t + pos_emb
-            src2, _ = layer.self_attn(q, k, value=x_t, key_padding_mask=padding_mask)
-            x_t = x_t + layer.dropout1(src2)
-            x_t = layer.norm1(x_t)
-            x_t = x_t + layer.dropout2(layer.linear2(layer.dropout2(layer.activation(layer.linear1(x_t)))))
-            x_t = layer.norm2(x_t)
-        return x_t.permute(1, 0, 2)  # (B, N, C)
+        x_stack_full = x.view(-1, d_model)
+        x_mask_stack = x_mask.view(-1)
+        x_pos_stack_full = x_pos.view(-1, 3)
+        batch_idxs_full = torch.arange(batch_size).type_as(x)[:, None].repeat(1, N).view(-1).int()
 
-    def _apply_cross_attn(self, layer, query, key, query_mask, key_mask, query_pos, key_pos):
-        """Apply one cross-attention + FFN block.
+        x_stack = x_stack_full[x_mask_stack]
+        x_pos_stack = x_pos_stack_full[x_mask_stack]
+        batch_idxs = batch_idxs_full[x_mask_stack]
 
-        Args:
-            query: (B, A, C) agent features
-            key: (B, M, C) map features
-        """
-        B, A, C = query.shape
-        q_t = query.permute(1, 0, 2)  # (A, B, C)
-        k_t = key.permute(1, 0, 2)    # (M, B, C)
-        k_padding_mask = ~key_mask  # (B, M)
-        q_pos_xy = query_pos[..., 0:2].permute(1, 0, 2)  # (A, B, 2)
-        k_pos_xy = key_pos[..., 0:2].permute(1, 0, 2)     # (M, B, 2)
-        q_pos_emb = position_encoding_utils.gen_sineembed_for_position(q_pos_xy, hidden_dim=C)
-        k_pos_emb = position_encoding_utils.gen_sineembed_for_position(k_pos_xy, hidden_dim=C)
+        batch_offsets = common_utils.get_batch_offsets(batch_idxs=batch_idxs, bs=batch_size).int()
+        batch_cnt = batch_offsets[1:] - batch_offsets[:-1]
 
-        q_with_pos = q_t + q_pos_emb
-
-        src2, _ = layer.cross_attn(
-            query=q_with_pos, key=k_t + k_pos_emb, value=k_t,
-            key_padding_mask=k_padding_mask,
+        index_pair = knn_utils.knn_batch_mlogk(
+            x_pos_stack, x_pos_stack, batch_idxs, batch_offsets, num_of_neighbors
         )
-        q_t = q_t + layer.dropout1(src2)
-        q_t = layer.norm1(q_t)
-        q_t = q_t + layer.dropout2(layer.linear2(layer.dropout2(layer.activation(layer.linear1(q_t)))))
-        q_t = layer.norm2(q_t)
-        return q_t.permute(1, 0, 2)  # (B, A, C)
+
+        pos_embedding = position_encoding_utils.gen_sineembed_for_position(
+            x_pos_stack[None, :, 0:2], hidden_dim=d_model
+        )[0]
+
+        output = x_stack
+        for layer in layers:
+            output = layer(
+                src=output, pos=pos_embedding,
+                index_pair=index_pair,
+                query_batch_cnt=batch_cnt, key_batch_cnt=batch_cnt,
+                index_pair_batch=batch_idxs,
+            )
+
+        ret_full_feature = torch.zeros_like(x_stack_full)
+        ret_full_feature[x_mask_stack] = output
+        return ret_full_feature.view(batch_size, N, d_model)
 
     def forward(self, batch_dict):
         input_dict = batch_dict['input_dict']
@@ -400,47 +355,49 @@ class SharedSceneEncoder(nn.Module):
         num_center_objects, num_objects, num_timestamps, _ = obj_trajs.shape
         num_polylines = map_polylines.shape[1]
 
-        # 1. encode polylines (per-object / per-polyline features)
+        # 1. encode polylines
         obj_trajs_in = torch.cat((obj_trajs, obj_trajs_mask[:, :, :, None].type_as(obj_trajs)), dim=-1)
         agent_features = self.agent_polyline_encoder(obj_trajs_in, obj_trajs_mask)  # (Nco, No, C)
         map_features = self.map_polyline_encoder(map_polylines, map_polylines_mask)  # (Nco, Nm, C)
 
-        agent_valid_mask = (obj_trajs_mask.sum(dim=-1) > 0)   # (Nco, No)
-        map_valid_mask = (map_polylines_mask.sum(dim=-1) > 0)  # (Nco, Nm)
+        agent_valid_mask = (obj_trajs_mask.sum(dim=-1) > 0)
+        map_valid_mask = (map_polylines_mask.sum(dim=-1) > 0)
 
-        # 2. factorized attention — iterate over center objects
-        # (each center object has its own coordinate frame, so we process them
-        #  individually but with the cheaper factorised attention structure)
-        output_agent_features = agent_features.new_zeros(num_center_objects, num_objects, self.num_out_channels)
-        output_map_features = map_features.new_zeros(num_center_objects, num_polylines, self.num_out_channels)
+        num_neighbors = self.model_cfg.NUM_OF_ATTN_NEIGHBORS
 
-        for ci in range(num_center_objects):
-            af = agent_features[ci:ci+1]  # (1, No, C)
-            mf = map_features[ci:ci+1]    # (1, Nm, C)
-            am = agent_valid_mask[ci:ci+1]
-            mm = map_valid_mask[ci:ci+1]
-            ap = obj_trajs_last_pos[ci:ci+1]
-            mp = map_polylines_center[ci:ci+1]
+        # 2. factorized local attention — all batched across center objects
+        # Pass 1: agent self-attention
+        agent_features = self._apply_local_attn_batched(
+            self.agent_attn_layers, agent_features, agent_valid_mask,
+            obj_trajs_last_pos, num_neighbors
+        )
 
-            # Pass 1: agent-agent self attention
-            af = self._apply_self_attn(self.agent_agent_attn_layers, af, am, ap)
+        # Pass 2: map self-attention
+        map_features = self._apply_local_attn_batched(
+            self.map_attn_layers, map_features, map_valid_mask,
+            map_polylines_center, num_neighbors
+        )
 
-            # Pass 2: map self attention
-            mf = self._apply_self_attn(self.map_self_attn_layers, mf, mm, mp)
+        # Pass 3: agent-map cross-attention via joint local attention
+        # Concatenate agent+map, apply local attention (agents attend to nearby map tokens)
+        joint_feature = torch.cat((agent_features, map_features), dim=1)
+        joint_mask = torch.cat((agent_valid_mask, map_valid_mask), dim=1)
+        joint_pos = torch.cat((obj_trajs_last_pos, map_polylines_center), dim=1)
 
-            # Pass 3: agent-map cross attention (agents query maps)
-            for layer in self.agent_map_cross_attn_layers:
-                af = self._apply_cross_attn(layer, af, mf, am, mm, ap, mp)
+        joint_feature = self._apply_local_attn_batched(
+            self.agent_map_attn_layers, joint_feature, joint_mask,
+            joint_pos, num_neighbors
+        )
 
-            output_agent_features[ci] = af[0]
-            output_map_features[ci] = mf[0]
+        agent_features = joint_feature[:, :num_objects]
+        map_features = joint_feature[:, num_objects:]
 
         # organize return features (same interface as MTREncoder)
-        center_objects_feature = output_agent_features[torch.arange(num_center_objects), track_index_to_predict]
+        center_objects_feature = agent_features[torch.arange(num_center_objects), track_index_to_predict]
 
         batch_dict['center_objects_feature'] = center_objects_feature
-        batch_dict['obj_feature'] = output_agent_features
-        batch_dict['map_feature'] = output_map_features
+        batch_dict['obj_feature'] = agent_features
+        batch_dict['map_feature'] = map_features
         batch_dict['obj_mask'] = agent_valid_mask
         batch_dict['map_mask'] = map_valid_mask
         batch_dict['obj_pos'] = obj_trajs_last_pos
