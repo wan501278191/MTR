@@ -35,7 +35,8 @@ DATA_CONFIG:
 
 MODEL:
     CONTEXT_ENCODER:
-        NAME: MTREncoder
+        # [Opt 6] Shared scene encoder with factorized attention + polar/Fourier
+        NAME: SharedSceneEncoder
 
         NUM_OF_ATTN_NEIGHBORS: 16
         NUM_INPUT_ATTR_AGENT: 29
@@ -53,6 +54,10 @@ MODEL:
         DROPOUT_OF_ATTN: 0.1 
 
         USE_LOCAL_ATTN: True
+
+        # [Opt 6b] polar + Fourier position encoding
+        USE_FOURIER_POS: true
+        FOURIER_NUM_FREQS: 8
 
     MOTION_DECODER:
         NAME: MTRDecoder
@@ -81,6 +86,37 @@ MODEL:
         }
 
         NMS_DIST_THRESH: 2.5
+
+        # [Opt 1] Temperature scaling — learnable parameter (default 1.0, calibrate post-training)
+
+        # [Opt 2] aWTA loss — annealed WTA replacing standard WTA
+        AWTA:
+            ENABLED: true
+            START_TEMP: 10.0
+            END_TEMP: 0.1
+            TOTAL_EPOCHS: 30
+
+        # [Opt 3] Kinematic feasibility post-processing
+        USE_KINEMATIC_FILTER: true
+        KINEMATIC_MAX_SPEED: 30.0
+        KINEMATIC_MAX_ACCEL: 8.0
+        KINEMATIC_MAX_STEER_DEG: 35.0
+        KINEMATIC_PENALIZE_ONLY: true
+
+        # [Opt 5] Dynamic intention query count
+        DYNAMIC_QUERY:
+            ENABLED: true
+            LOW_THRESH: 10
+            MID_THRESH: 30
+            LOW_QUERY: 16
+            MID_QUERY: 64
+            HIGH_QUERY: 128
+
+
+# [Opt 4] Test-Time Augmentation (eval only)
+TTA:
+    ENABLED: true
+    NUM_MODES: 6
 
 
 OPTIMIZATION:

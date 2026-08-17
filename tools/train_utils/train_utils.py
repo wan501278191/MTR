@@ -39,6 +39,11 @@ def train_one_epoch(model, optimizer, train_loader, accumulated_iter, optim_cfg,
             cur_lr = optimizer.param_groups[0]['lr']
 
         model.train()
+        # Optimization 2: update aWTA annealing temperature with current epoch
+        if hasattr(model, 'motion_decoder') and hasattr(model.motion_decoder, 'set_epoch'):
+            model.motion_decoder.set_epoch(cur_epoch)
+        elif hasattr(model, 'module') and hasattr(model.module.motion_decoder, 'set_epoch'):
+            model.module.motion_decoder.set_epoch(cur_epoch)
         optimizer.zero_grad()
         if optimizer_2 is not None:
             optimizer_2.zero_grad()
