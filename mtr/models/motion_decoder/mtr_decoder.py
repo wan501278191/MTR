@@ -78,6 +78,28 @@ class MTRDecoder(nn.Module):
             in_channels=self.d_model, hidden_size=self.d_model, num_decoder_layers=self.num_decoder_layers
         )
 
+        # === Optimization 1: Temperature scaling for confidence calibration ===
+        self.temperature = nn.Parameter(torch.ones(1))
+
+        # === Optimization 2: aWTA loss config ===
+        self.awta_cfg = self.model_cfg.get('AWTA', None)
+        if self.awta_cfg is not None and self.awta_cfg.get('ENABLED', False):
+            self.awta_scheduler = loss_utils.AnnealingScheduler(
+                start_temp=self.awta_cfg.get('START_TEMP', 10.0),
+                end_temp=self.awta_cfg.get('END_TEMP', 0.1),
+                total_epochs=self.awta_cfg.get('TOTAL_EPOCHS', 30),
+            )
+            self.cur_epoch = 0
+        else:
+            self.awta_scheduler = None
+            self.cur_epoch = 0
+
+        # === Optimization 5: dynamic intention query count ===
+        self.dynamic_query_cfg = self.model_cfg.get('DYNAMIC_QUERY', None)
+
+        # === Optimization 3: kinematic post-processing flag ===
+        self.use_kinematic_filter = self.model_cfg.get('USE_KINEMATIC_FILTER', False)
+
         self.forward_ret_dict = {}
 
     def build_dense_future_prediction_layers(self, hidden_dim, num_future_frames):
@@ -192,6 +214,34 @@ class MTRDecoder(nn.Module):
             intention_query = self.intention_query_mlps(intention_query.view(-1, self.d_model)).view(-1, num_center_objects, self.d_model)  # (num_query, num_center_objects, C)
         return intention_query, intention_points
 
+    def select_active_query_count(self, num_center_objects, batch_dict):
+        """Optimization 5: pick intention-query budget based on scene complexity."""
+        if self.dynamic_query_cfg is None or not self.dynamic_query_cfg.get('ENABLED', False):
+            return None  # use all queries
+
+        input_dict = batch_dict.get('input_dict', {})
+        # number of agents to predict is a coarse complexity proxy
+        num_agents = num_center_objects
+
+        # try to estimate interaction density from obj_mask
+        obj_mask = batch_dict.get('obj_mask')
+        if obj_mask is not None:
+            avg_neighbors = obj_mask.float().sum(dim=-1).mean().item()
+        else:
+            avg_neighbors = 0.0
+
+        complexity = num_agents * 0.3 + avg_neighbors * 0.5
+        if complexity < self.dynamic_query_cfg.get('LOW_THRESH', 10):
+            return self.dynamic_query_cfg.get('LOW_QUERY', 16)
+        elif complexity < self.dynamic_query_cfg.get('MID_THRESH', 30):
+            return self.dynamic_query_cfg.get('MID_QUERY', 64)
+        else:
+            return self.dynamic_query_cfg.get('HIGH_QUERY', 128)
+
+    def set_epoch(self, epoch):
+        """Update current epoch for aWTA annealing (called from training loop)."""
+        self.cur_epoch = epoch
+
     def apply_cross_attention(self, kv_feature, kv_mask, kv_pos, query_content, query_embed, attention_layer,
                               dynamic_query_center=None, layer_idx=0, use_local_attn=False, query_index_pair=None,
                               query_content_pre_mlp=None, query_embed_pre_mlp=None):
@@ -292,8 +342,15 @@ class MTRDecoder(nn.Module):
 
         return sorted_idxs.int(), base_map_idxs
 
-    def apply_transformer_decoder(self, center_objects_feature, center_objects_type, obj_feature, obj_mask, obj_pos, map_feature, map_mask, map_pos):
+    def apply_transformer_decoder(self, center_objects_feature, center_objects_type, obj_feature, obj_mask, obj_pos, map_feature, map_mask, map_pos, batch_dict=None):
         intention_query, intention_points = self.get_motion_query(center_objects_type)
+
+        # Optimization 5: dynamically select a subset of intention queries
+        active_queries = self.select_active_query_count(len(center_objects_type), batch_dict or {})
+        if active_queries is not None and active_queries < intention_query.shape[0]:
+            intention_query = intention_query[:active_queries]
+            intention_points = intention_points[:active_queries]
+
         query_content = torch.zeros_like(intention_query)
         self.forward_ret_dict['intention_points'] = intention_points.permute(1, 0, 2)  # (num_center_objects, num_query, 2)
 
@@ -396,12 +453,22 @@ class MTRDecoder(nn.Module):
             assert pred_trajs.shape[-1] == 7
             pred_trajs_gmm, pred_vel = pred_trajs[:, :, :, 0:5], pred_trajs[:, :, :, 5:7]
 
-            loss_reg_gmm, center_gt_positive_idx = loss_utils.nll_loss_gmm_direct(
-                pred_scores=pred_scores, pred_trajs=pred_trajs_gmm,
-                gt_trajs=center_gt_trajs[:, :, 0:2], gt_valid_mask=center_gt_trajs_mask,
-                pre_nearest_mode_idxs=center_gt_positive_idx,
-                timestamp_loss_weight=None, use_square_gmm=False,
-            )
+            if self.awta_scheduler is not None:
+                temp = self.awta_scheduler.get_temperature(self.cur_epoch)
+                loss_reg_gmm, center_gt_positive_idx = loss_utils.awta_nll_loss_gmm(
+                    pred_scores=pred_scores, pred_trajs=pred_trajs_gmm,
+                    gt_trajs=center_gt_trajs[:, :, 0:2], gt_valid_mask=center_gt_trajs_mask,
+                    temperature=temp,
+                    pre_nearest_mode_idxs=center_gt_positive_idx,
+                    timestamp_loss_weight=None, use_square_gmm=False,
+                )
+            else:
+                loss_reg_gmm, center_gt_positive_idx = loss_utils.nll_loss_gmm_direct(
+                    pred_scores=pred_scores, pred_trajs=pred_trajs_gmm,
+                    gt_trajs=center_gt_trajs[:, :, 0:2], gt_valid_mask=center_gt_trajs_mask,
+                    pre_nearest_mode_idxs=center_gt_positive_idx,
+                    timestamp_loss_weight=None, use_square_gmm=False,
+                )
 
             pred_vel = pred_vel[torch.arange(num_center_objects), center_gt_positive_idx]
             loss_reg_vel = F.l1_loss(pred_vel, center_gt_trajs[:, :, 2:4], reduction='none')
@@ -490,7 +557,8 @@ class MTRDecoder(nn.Module):
 
     def generate_final_prediction(self, pred_list, batch_dict):
         pred_scores, pred_trajs = pred_list[-1]
-        pred_scores = torch.softmax(pred_scores, dim=-1)  # (num_center_objects, num_query)
+        # Optimization 1: temperature scaling before softmax
+        pred_scores = torch.softmax(pred_scores / self.temperature.clamp_min(1e-6), dim=-1)  # (num_center_objects, num_query)
 
         num_center_objects, num_query, num_future_timestamps, num_feat = pred_trajs.shape
         if self.num_motion_modes != num_query:
@@ -503,6 +571,19 @@ class MTRDecoder(nn.Module):
         else:
             pred_trajs_final = pred_trajs
             pred_scores_final = pred_scores
+
+        # Optimization 3: kinematic feasibility filtering / penalisation
+        if self.use_kinematic_filter:
+            _, pred_scores_final = motion_utils.kinematic_filter(
+                pred_trajs=pred_trajs_final[:, :, :, 0:2],
+                pred_scores=pred_scores_final,
+                frequency_hz=10.0,
+                max_speed=self.model_cfg.get('KINEMATIC_MAX_SPEED', 30.0),
+                max_accel=self.model_cfg.get('KINEMATIC_MAX_ACCEL', 8.0),
+                max_steer_deg=self.model_cfg.get('KINEMATIC_MAX_STEER_DEG', 35.0),
+                penalize_only=self.model_cfg.get('KINEMATIC_PENALIZE_ONLY', True),
+            )
+            # scores are re-normalised inside kinematic_filter; trajs unchanged
 
         return pred_scores_final, pred_trajs_final
 
@@ -533,7 +614,8 @@ class MTRDecoder(nn.Module):
             center_objects_feature=center_objects_feature,
             center_objects_type=input_dict['center_objects_type'],
             obj_feature=obj_feature, obj_mask=obj_mask, obj_pos=obj_pos,
-            map_feature=map_feature, map_mask=map_mask, map_pos=map_pos
+            map_feature=map_feature, map_mask=map_mask, map_pos=map_pos,
+            batch_dict=batch_dict
         )
 
         self.forward_ret_dict['pred_list'] = pred_list

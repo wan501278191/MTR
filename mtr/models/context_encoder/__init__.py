@@ -4,10 +4,11 @@
 # All Rights Reserved
 
 
-from .mtr_encoder import MTREncoder
+from .mtr_encoder import MTREncoder, SharedSceneEncoder
 
 __all__ = {
     'MTREncoder': MTREncoder,
+    'SharedSceneEncoder': SharedSceneEncoder,
 }
 
 

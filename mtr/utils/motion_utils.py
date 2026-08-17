@@ -4,7 +4,8 @@
 # All Rights Reserved
 
 
-import torch 
+import math
+import torch
 
 
 def batch_nms(pred_trajs, pred_scores, dist_thresh, num_ret_modes=6):
@@ -113,3 +114,53 @@ def get_ade_of_each_category(pred_trajs, gt_trajs, gt_trajs_mask, object_types, 
         )
         ret_dict[f'{pre_tag}ade_{cur_type}{post_tag}'] = ade
     return ret_dict
+
+def kinematic_filter(pred_trajs, pred_scores, frequency_hz=10.0,
+                     max_speed=30.0, max_accel=8.0, max_steer_deg=35.0,
+                     penalize_only=True):
+    """Filter or penalise physically infeasible trajectories.
+
+    Args:
+        pred_trajs (torch.Tensor): (B, M, T, 2) predicted trajectories
+        pred_scores (torch.Tensor): (B, M) confidence scores (already softmaxed)
+        frequency_hz: trajectory sampling frequency (default 10 Hz)
+        max_speed: maximum feasible speed (m/s)
+        max_accel: maximum feasible acceleration (m/s^2)
+        max_steer_deg: maximum heading change per step (degrees)
+        penalize_only: if True, downweight infeasible modes instead of removing them
+
+    Returns:
+        filtered trajs (B, M, T, 2) and scores (B, M)
+    """
+    dt = 1.0 / frequency_hz
+    max_steer = torch.deg2rad(torch.tensor(max_steer_deg, device=pred_trajs.device, dtype=pred_trajs.dtype))
+
+    # velocities (B, M, T-1, 2)
+    vel = pred_trajs[:, :, 1:, 0:2] - pred_trajs[:, :, :-1, 0:2]  # displacement per step
+    speeds = vel.norm(dim=-1) / dt  # (B, M, T-1)
+
+    headings = torch.atan2(vel[..., 1], vel[..., 0])  # (B, M, T-1)
+    heading_diff = torch.abs(torch.diff(headings, dim=-1))  # (B, M, T-2)
+    # wrap to [0, pi]
+    heading_diff = torch.remainder(heading_diff, 2 * math.pi)
+    heading_diff = torch.min(heading_diff, 2 * math.pi - heading_diff)
+
+    speed_ok = speeds.max(dim=-1)[0] < max_speed  # (B, M)
+    accel = torch.abs(torch.diff(speeds, dim=-1)) / dt  # (B, M, T-2)
+    accel_ok = accel.max(dim=-1)[0] < max_accel
+    steer_ok = heading_diff.max(dim=-1)[0] < max_steer
+
+    feasible = speed_ok & accel_ok & steer_ok  # (B, M)
+
+    if penalize_only:
+        # downweight infeasible modes by 0.5
+        penalty = torch.where(feasible, torch.ones_like(pred_scores), torch.full_like(pred_scores, 0.5))
+        pred_scores = pred_scores * penalty
+        pred_scores = pred_scores / pred_scores.sum(dim=-1, keepdim=True).clamp_min(1e-6)
+    else:
+        # hard filter: zero out infeasible, keep at least the best feasible mode
+        pred_scores = pred_scores * feasible.float()
+        max_scores, _ = pred_scores.max(dim=-1, keepdim=True)
+        pred_scores = torch.where(max_scores > 0, pred_scores, torch.ones_like(pred_scores))
+
+    return pred_trajs, pred_scores
