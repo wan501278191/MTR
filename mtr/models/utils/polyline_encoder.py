@@ -98,11 +98,12 @@ class FourierPositionEncoder(nn.Module):
 
 
 class PointNetPolylineEncoderWithFourier(nn.Module):
-    """Polyline encoder with optional polar+Fourier position injection.
+    """Polyline encoder with residual polar+Fourier position injection.
 
-    Behaves identically to ``PointNetPolylineEncoder`` when
-    ``use_fourier_pos=False``. When enabled, it concatenates Fourier
-    position features to the per-point features before the pre-MLP.
+    Identical to ``PointNetPolylineEncoder`` at init (Fourier projection is
+    zero-initialised so the residual adds nothing).  The model gradually
+    learns to use or ignore Fourier features per context, preventing the
+    feature-dimension change that hurt CYCLIST in the concatenation variant.
     """
 
     def __init__(self, in_channels, hidden_dim, num_layers=3, num_pre_layers=1,
@@ -111,7 +112,9 @@ class PointNetPolylineEncoderWithFourier(nn.Module):
         self.use_fourier_pos = use_fourier_pos
         if use_fourier_pos:
             self.fourier_encoder = FourierPositionEncoder(out_dim=hidden_dim, num_freqs=fourier_freqs)
-            in_channels = in_channels + hidden_dim
+            # zero-init the projection so residual = 0 at start (identical to original)
+            nn.init.zeros_(self.fourier_encoder.proj.weight)
+            nn.init.zeros_(self.fourier_encoder.proj.bias)
 
         self.pre_mlps = common_layers.build_mlps(
             c_in=in_channels,
@@ -135,14 +138,15 @@ class PointNetPolylineEncoderWithFourier(nn.Module):
     def forward(self, polylines, polylines_mask):
         batch_size, num_polylines, num_points_each_polylines, C = polylines.shape
 
-        if self.use_fourier_pos:
-            pos_feat = self.fourier_encoder(polylines[..., 0:2])  # (B, P, N, hidden)
-            polylines = torch.cat((polylines, pos_feat), dim=-1)
-
-        # pre-mlp
+        # pre-mlp (unchanged input dimension)
         polylines_feature_valid = self.pre_mlps(polylines[polylines_mask])
         polylines_feature = polylines.new_zeros(batch_size, num_polylines, num_points_each_polylines, polylines_feature_valid.shape[-1])
         polylines_feature[polylines_mask] = polylines_feature_valid
+
+        # residual Fourier injection: add to pre-mlp output (zero at init)
+        if self.use_fourier_pos:
+            pos_feat = self.fourier_encoder(polylines[..., 0:2])  # (B, P, N, hidden)
+            polylines_feature = polylines_feature + pos_feat
 
         # get global feature
         pooled_feature = polylines_feature.max(dim=2)[0]
