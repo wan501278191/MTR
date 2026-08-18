@@ -91,10 +91,10 @@ MODEL:
 
         # [Opt 2] aWTA loss — annealed WTA replacing standard WTA
         AWTA:
-            ENABLED: true
+            ENABLED: false
             START_TEMP: 10.0
             END_TEMP: 0.1
-            TOTAL_EPOCHS: 30
+            TOTAL_EPOCHS: 50
 
         # [Opt 3] Kinematic feasibility post-processing
         USE_KINEMATIC_FILTER: true
