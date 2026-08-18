@@ -100,6 +100,9 @@ class MTRDecoder(nn.Module):
         # === Optimization 3: kinematic post-processing flag ===
         self.use_kinematic_filter = self.model_cfg.get('USE_KINEMATIC_FILTER', False)
 
+        # === Optimization: Label Smoothing for classification loss ===
+        self.label_smoothing = self.model_cfg.get('LABEL_SMOOTHING', 0.0)
+
         self.forward_ret_dict = {}
 
     def build_dense_future_prediction_layers(self, hidden_dim, num_future_frames):
@@ -474,7 +477,12 @@ class MTRDecoder(nn.Module):
             loss_reg_vel = F.l1_loss(pred_vel, center_gt_trajs[:, :, 2:4], reduction='none')
             loss_reg_vel = (loss_reg_vel * center_gt_trajs_mask[:, :, None]).sum(dim=-1).sum(dim=-1)
 
-            loss_cls = F.cross_entropy(input=pred_scores, target=center_gt_positive_idx, reduction='none')
+            if self.label_smoothing > 0:
+                loss_cls = F.cross_entropy(
+                    input=pred_scores, target=center_gt_positive_idx,
+                    reduction='none', label_smoothing=self.label_smoothing)
+            else:
+                loss_cls = F.cross_entropy(input=pred_scores, target=center_gt_positive_idx, reduction='none')
 
             # total loss
             weight_cls = self.model_cfg.LOSS_WEIGHTS.get('cls', 1.0)

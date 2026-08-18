@@ -36,7 +36,7 @@ DATA_CONFIG:
 MODEL:
     CONTEXT_ENCODER:
         # [Opt 6] Shared scene encoder with factorized attention + polar/Fourier
-        NAME: SharedSceneEncoder
+        NAME: MTREncoder
 
         NUM_OF_ATTN_NEIGHBORS: 16
         NUM_INPUT_ATTR_AGENT: 29
@@ -56,7 +56,7 @@ MODEL:
         USE_LOCAL_ATTN: True
 
         # [Opt 6b] polar + Fourier position encoding
-        USE_FOURIER_POS: true
+        USE_FOURIER_POS: false
         FOURIER_NUM_FREQS: 8
 
     MOTION_DECODER:
@@ -80,10 +80,13 @@ MODEL:
         NUM_WAYPOINT_MAP_POLYLINES: 128
 
         LOSS_WEIGHTS: {
-            'cls': 1.0, 
-            'reg': 1.0, 
+            'cls': 2.0,
+            'reg': 1.0,
             'vel': 0.5
         }
+
+        # Label smoothing for classification loss (prevents overconfidence, improves mAP ranking)
+        LABEL_SMOOTHING: 0.1
 
         NMS_DIST_THRESH: 2.5
 
@@ -105,7 +108,7 @@ MODEL:
 
         # [Opt 5] Dynamic intention query count
         DYNAMIC_QUERY:
-            ENABLED: true
+            ENABLED: false
             LOW_THRESH: 10
             MID_THRESH: 30
             LOW_QUERY: 16
