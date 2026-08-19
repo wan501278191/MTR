@@ -76,13 +76,13 @@ MODEL:
 
         # === Optimization configs (from QCNet/DiffSemanticFusion) ===
         # Loss type: 'gmm_hard' (original), 'gmm_mixture' (soft mode selection), 'laplace_mixture'
-        LOSS_TYPE: 'gmm_mixture'
+        LOSS_TYPE: 'gmm_hard'
         # Timestamp weight: 'none' or 'fde_weighted' (emphasize final position for minFDE)
-        TIMESTAMP_WEIGHT_TYPE: 'fde_weighted'
+        TIMESTAMP_WEIGHT_TYPE: 'none'
         # Cumulative displacement parameterization (QCNet-style)
-        USE_CUMULATIVE_DISPLACEMENT: True
+        USE_CUMULATIVE_DISPLACEMENT: False
         # Diffusion trajectory refiner (DiffSemanticFusion-style)
-        USE_DIFFUSION_REFINER: True
+        USE_DIFFUSION_REFINER: False
         DIFFUSION_CONFIG: {
             'TRAJ_DIM': 2,
             'HIDDEN_DIM': 128,
@@ -105,7 +105,7 @@ MODEL:
 OPTIMIZATION:
     BATCH_SIZE_PER_GPU: 1
     #NUM_EPOCHS: 30
-    NUM_EPOCHS: 30
+    NUM_EPOCHS: 50
 
     OPTIMIZER: AdamW
     LR: 0.0001
