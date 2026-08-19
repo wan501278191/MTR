@@ -29,9 +29,10 @@ class MotionTransformer(nn.Module):
         if self.use_diffusion_refiner:
             from mtr.models.diffusion import TrajectoryDiffusionRefiner
             diff_cfg = self.model_cfg.MOTION_DECODER.get('DIFFUSION_CONFIG', {})
+            # cond_dim must match center_objects_feature dimension (context encoder's D_MODEL)
             self.diffusion_refiner = TrajectoryDiffusionRefiner(
                 traj_dim=diff_cfg.get('TRAJ_DIM', 2),
-                cond_dim=self.model_cfg.MOTION_DECODER.D_MODEL,
+                cond_dim=self.model_cfg.CONTEXT_ENCODER.D_MODEL,
                 hidden_dim=diff_cfg.get('HIDDEN_DIM', 128),
                 num_diffusion_steps=diff_cfg.get('NUM_STEPS', 20),
             )
