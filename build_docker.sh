@@ -37,11 +37,9 @@ if [ ! -f "$RESULT_PKL" ]; then
         --batch_size 64 \
         --workers 8 \
         --save_to_file \
-        --set DATA_CONFIG.DATA_ROOT ../../data \
-              DATA_CONFIG.SPLIT_DIR.test processed_scenarios_testing_B1_part \
+        --set DATA_CONFIG.SPLIT_DIR.test processed_scenarios_testing_B1_part \
               DATA_CONFIG.INFO_FILE.test processed_scenarios_testB1_part_infos.pkl
     cd "$MTR_DIR"
-    # 找到生成的 result.pkl 并拷贝到 output/
     GENERATED=$(find output -name "result.pkl" -path "*submission*" | head -1)
     if [ -z "$GENERATED" ]; then
         GENERATED=$(find output -name "result.pkl" | head -1)
@@ -63,8 +61,7 @@ if [ ! -f "$EVAL_RESULT_PKL" ]; then
         --batch_size 64 \
         --workers 8 \
         --save_to_file \
-        --set DATA_CONFIG.DATA_ROOT ../../data \
-              DATA_CONFIG.SPLIT_DIR.test processed_scenarios_validation \
+        --set DATA_CONFIG.SPLIT_DIR.test processed_scenarios_validation \
               DATA_CONFIG.INFO_FILE.test processed_scenarios_val_infos.pkl
     cd "$MTR_DIR"
     GENERATED_EVAL=$(find output -name "result.pkl" -path "*demo_vis*" | head -1)
@@ -76,14 +73,14 @@ if [ ! -f "$EVAL_RESULT_PKL" ]; then
     fi
 fi
 
-# 生成演示图片（取前 3 个场景）
+# 生成演示图片
 if [ -f "$EVAL_RESULT_PKL" ]; then
     echo "生成演示图片..."
     mkdir -p 演示图片
     cd tools
     python visualize_prediction.py \
         --result_pkl "../$EVAL_RESULT_PKL" \
-        --data_dir ../../data/processed_scenarios_validation \
+        --data_dir ../data/processed_scenarios_validation \
         --output_dir ../演示图片 \
         --all || true
     cd "$MTR_DIR"
