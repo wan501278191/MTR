@@ -101,7 +101,10 @@ class MotionTransformer(nn.Module):
         epoch = checkpoint.get('epoch', -1)
         it = checkpoint.get('it', 0.0)
 
-        self.load_state_dict(checkpoint['model_state'], strict=True)
+        # Strip DDP "module." prefix if present (DDP-saved checkpoints)
+        model_state = checkpoint['model_state']
+        model_state = {k[7:] if k.startswith('module.') else k: v for k, v in model_state.items()}
+        self.load_state_dict(model_state, strict=True)
 
         if optimizer is not None:
             logger.info('==> Loading optimizer parameters from checkpoint %s to %s'
