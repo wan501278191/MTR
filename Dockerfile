@@ -26,9 +26,6 @@ COPY . /workspace/MTR
 RUN mkdir -p /workspace/model
 COPY model/best_model_ema.pth /workspace/model/best_model_ema.pth
 
-# 内置参考输出结果（随镜像提供）
-COPY output/result.pkl /workspace/output/result.pkl
-
 # 环境变量
 ENV PATH=$MTR_ENV/bin:$PATH \
     PYTHONPATH=/workspace/MTR

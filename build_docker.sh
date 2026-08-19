@@ -26,7 +26,7 @@ fi
 ls -lh mtr.tar.gz
 
 # === 1. 测试集全量推理 → output/result.pkl ===
-RESULT_PKL="output/result.pkl"
+RESULT_PKL="test_output/result.pkl"
 if [ ! -f "$RESULT_PKL" ]; then
     echo "$RESULT_PKL 不存在，在大测试集上执行推理..."
     cd tools
@@ -40,16 +40,16 @@ if [ ! -f "$RESULT_PKL" ]; then
         --set DATA_CONFIG.SPLIT_DIR.test processed_scenarios_testing_B1_part \
               DATA_CONFIG.INFO_FILE.test processed_scenarios_testB1_part_infos.pkl
     cd "$MTR_DIR"
-    GENERATED=$(find output -name "result.pkl" -path "*submission*" | head -1)
+    GENERATED=$(find test_output -name "result.pkl" -path "*submission*" | head -1)
     if [ -z "$GENERATED" ]; then
-        GENERATED=$(find output -name "result.pkl" | head -1)
+        GENERATED=$(find test_output -name "result.pkl" | head -1)
     fi
     cp "$GENERATED" "$RESULT_PKL"
 fi
 ls -lh "$RESULT_PKL"
 
 # === 2. 验证集推理（有真值，用于演示对比）→ output/eval_result.pkl ===
-EVAL_RESULT_PKL="output/eval_result.pkl"
+EVAL_RESULT_PKL="test_output/eval_result.pkl"
 if [ ! -f "$EVAL_RESULT_PKL" ]; then
     echo "在验证集上推理生成带真值的结果..."
     cd tools
@@ -63,9 +63,9 @@ if [ ! -f "$EVAL_RESULT_PKL" ]; then
         --set DATA_CONFIG.SPLIT_DIR.test processed_scenarios_validation \
               DATA_CONFIG.INFO_FILE.test processed_scenarios_val_infos.pkl
     cd "$MTR_DIR"
-    GENERATED_EVAL=$(find output -name "result.pkl" -path "*demo_vis*" | head -1)
+    GENERATED_EVAL=$(find test_output -name "result.pkl" -path "*demo_vis*" | head -1)
     if [ -z "$GENERATED_EVAL" ]; then
-        GENERATED_EVAL=$(find output -name "result.pkl" -path "*eval*" | head -1)
+        GENERATED_EVAL=$(find test_output -name "result.pkl" -path "*eval*" | head -1)
     fi
     if [ -n "$GENERATED_EVAL" ]; then
         cp "$GENERATED_EVAL" "$EVAL_RESULT_PKL"
