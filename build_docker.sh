@@ -25,7 +25,7 @@ if [ ! -f mtr.tar.gz ]; then
 fi
 ls -lh mtr.tar.gz
 
-# 确保测试集推理结果 result.pkl 存在（在大测试集上推理生成）
+# === 1. 测试集全量推理 → output/result.pkl ===
 RESULT_PKL="output/result.pkl"
 if [ ! -f "$RESULT_PKL" ]; then
     echo "$RESULT_PKL 不存在，在大测试集上执行推理..."
@@ -34,7 +34,7 @@ if [ ! -f "$RESULT_PKL" ]; then
         --cfg_file cfgs/waymo/mtr_voyah_data.yaml \
         --ckpt ../model/best_model_ema.pth \
         --extra_tag submission \
-        --batch_size 64 \
+        --batch_size 32 \
         --workers 8 \
         --save_to_file \
         --set DATA_CONFIG.SPLIT_DIR.test processed_scenarios_testing_B1_part \
@@ -48,8 +48,7 @@ if [ ! -f "$RESULT_PKL" ]; then
 fi
 ls -lh "$RESULT_PKL"
 
-echo "=== 0.5. 生成演示图片 ==="
-# 在验证集上推理（有真值，用于可视化对比）
+# === 2. 验证集推理（有真值，用于演示对比）→ output/eval_result.pkl ===
 EVAL_RESULT_PKL="output/eval_result.pkl"
 if [ ! -f "$EVAL_RESULT_PKL" ]; then
     echo "在验证集上推理生成带真值的结果..."
@@ -58,7 +57,7 @@ if [ ! -f "$EVAL_RESULT_PKL" ]; then
         --cfg_file cfgs/waymo/mtr_voyah_data.yaml \
         --ckpt ../model/best_model_ema.pth \
         --extra_tag demo_vis \
-        --batch_size 64 \
+        --batch_size 32 \
         --workers 8 \
         --save_to_file \
         --set DATA_CONFIG.SPLIT_DIR.test processed_scenarios_validation \
@@ -72,28 +71,45 @@ if [ ! -f "$EVAL_RESULT_PKL" ]; then
         cp "$GENERATED_EVAL" "$EVAL_RESULT_PKL"
     fi
 fi
+ls -lh "$EVAL_RESULT_PKL" 2>/dev/null || echo "警告: eval_result.pkl 不存在"
 
-# 生成演示图片
-if [ -f "$EVAL_RESULT_PKL" ]; then
-    echo "生成演示图片..."
-    mkdir -p 演示图片
-    cd tools
+# === 3. 生成演示图片（eval + test 各 3 张）===
+echo "=== 3. 生成演示图片 ==="
+mkdir -p 演示图片/eval 演示图片/test
+cd tools
+
+# eval（验证集，有真值对比）
+if [ -f "../$EVAL_RESULT_PKL" ]; then
+    echo "生成 eval 演示图片..."
     python visualize_prediction.py \
         --result_pkl "../$EVAL_RESULT_PKL" \
-        --data_dir ../data/processed_scenarios_validation \
-        --output_dir ../演示图片 \
-        --all || true
-    cd "$MTR_DIR"
-    ls -lh 演示图片/*.png 2>/dev/null || echo "警告: 未生成演示图片"
+        --data_dir ../../data/processed_scenarios_validation \
+        --output_dir ../演示图片/eval \
+        --all --max_scenarios 3 || true
 fi
 
-echo "=== 1. 构建 Docker 镜像 ==="
+# test（大测试集）
+if [ -f "../$RESULT_PKL" ]; then
+    echo "生成 test 演示图片..."
+    python visualize_prediction.py \
+        --result_pkl "../$RESULT_PKL" \
+        --data_dir ../../data/processed_scenarios_testing_B1_part \
+        --output_dir ../演示图片/test \
+        --all --max_scenarios 3 || true
+fi
+
+cd "$MTR_DIR"
+echo "=== 演示图片列表 ==="
+find 演示图片 -name "*.png" -exec ls -lh {} \; 2>/dev/null || echo "警告: 未生成演示图片"
+
+# === 4. 构建 Docker 镜像 ===
+echo "=== 4. 构建 Docker 镜像 ==="
 docker build -t ${IMAGE_NAME} .
 
-echo "=== 2. 导出 Docker 镜像为 Tar 包 ==="
+echo "=== 5. 导出 Docker 镜像为 Tar 包 ==="
 docker save -o ${TAR_NAME} ${IMAGE_NAME}
 
-echo "=== 3. 验证镜像 ==="
+echo "=== 6. 验证镜像 ==="
 docker run --rm ${IMAGE_NAME} python -c "import torch; print(f'PyTorch: {torch.__version__}, CUDA: {torch.cuda.is_available()}')"
 
 echo "=== 完成 ==="

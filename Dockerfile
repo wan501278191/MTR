@@ -45,7 +45,7 @@ CMD ["python", "tools/test.py", \
      "--cfg_file", "cfgs/waymo/mtr_voyah_data.yaml", \
      "--ckpt", "/workspace/model/best_model_ema.pth", \
      "--extra_tag", "submission", \
-     "--batch_size", "64", \
+     "--batch_size", "32", \
      "--workers", "8", \
      "--save_to_file", \
      "--set", "DATA_CONFIG.DATA_ROOT", "/mnt/data", \

@@ -61,6 +61,8 @@ def parse_args():
                         help='Output directory for PNG files')
     parser.add_argument('--all', action='store_true', default=False,
                         help='Visualize all scenarios in result.pkl')
+    parser.add_argument('--max_scenarios', type=int, default=3,
+                        help='Max number of scenarios to visualize (default: 3)')
     return parser.parse_args()
 
 
@@ -299,7 +301,9 @@ def main():
 
     if args.all:
         scenario_ids = sorted(scene_preds.keys())
-        print(f'Visualizing all {len(scenario_ids)} scenarios...')
+        if args.max_scenarios > 0:
+            scenario_ids = scenario_ids[:args.max_scenarios]
+        print(f'Visualizing {len(scenario_ids)} scenarios...')
         for i, sid in enumerate(scenario_ids):
             n_objects = len(scene_preds[sid])
             for obj_idx in range(n_objects):
