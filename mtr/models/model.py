@@ -133,6 +133,13 @@ class MotionTransformer(nn.Module):
 
         logger.info(f'The number of disk ckpt keys: {len(model_state_disk)}')
         model_state = self.state_dict()
+
+        # Strip DDP "module." prefix if present (DDP/EMA checkpoints may have it)
+        model_state_disk = {
+            (k[7:] if k.startswith('module.') else k): v
+            for k, v in model_state_disk.items()
+        }
+
         model_state_disk_filter = {}
         for key, val in model_state_disk.items():
             if key in model_state and model_state_disk[key].shape == model_state[key].shape:

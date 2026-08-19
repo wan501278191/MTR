@@ -1,4 +1,3 @@
-output/
 __pycache__/
 *.pyc
 *.pyo
@@ -6,3 +5,15 @@ __pycache__/
 *.egg-info/
 .DS_Store
 *.bak
+data/
+swanlog/
+*.log
+# 忽略所有 checkpoint，但保留 model/best_model_ema.pth
+*.pth
+!model/best_model_ema.pth
+# 忽略 output 中的 checkpoint，但保留参考输出 result.pkl
+output/*
+!output/result.pkl
+# 忽略大 tar 包（构建产物），但保留 conda-pack 环境包
+mtr_voyah_submission.tar
+*.pth

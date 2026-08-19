@@ -1,46 +1,53 @@
 # MTR 轨迹预测提交镜像（含模型权重）
 # 赛事要求: Ubuntu 22.04, CUDA < 12.3
-# 用 conda 镜像避免 apt 装 Python 3.8 失败（jammy 只有 3.10）
-FROM nvidia/cuda:11.8.0-cudnn8-devel-ubuntu22.04
+# 用 conda-pack 打包完整环境，构建时无需网络
+FROM nvidia/cuda:11.8.0-cudnn8-runtime-ubuntu22.04
 
-ENV DEBIAN_FRONTEND=noninteractive
-ENV PYTHONUNBUFFERED=1
+ENV DEBIAN_FRONTEND=noninteractive \
+    TZ=Asia/Shanghai \
+    MTR_ENV=/opt/conda/envs/mtr
 
-# 系统依赖（不装 python3.8，用 conda 提供）
-RUN apt-get update && apt-get install -y --no-install-recommends     git build-essential ninja-build wget bzip2 ca-certificates     && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    bash ca-certificates libglib2.0-0 libsm6 libxext6 libxrender1 \
+    tzdata build-essential ninja-build \
+    && rm -rf /var/lib/apt/lists/*
 
-# 安装 Miniconda（提供 Python 3.8）
-ENV CONDA_DIR=/opt/conda
-RUN wget -q https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh -O /tmp/miniconda.sh     && bash /tmp/miniconda.sh -b -p ${CONDA_DIR}     && rm /tmp/miniconda.sh
-ENV PATH=${CONDA_DIR}/bin:${PATH}
+WORKDIR /workspace
 
-# 创建 Python 3.8 环境（与训练环境一致）
-RUN conda create -y -n mtr python=3.8 && conda clean -afy
-ENV CONDA_DEFAULT_ENV=mtr
-ENV PATH=${CONDA_DIR}/envs/mtr/bin:${PATH}
-# 让 'python' 和 'pip' 指向 mtr 环境
-RUN ln -sf ${CONDA_DIR}/envs/mtr/bin/python ${CONDA_DIR}/bin/python     && ln -sf ${CONDA_DIR}/envs/mtr/bin/pip ${CONDA_DIR}/bin/pip
+# 解压 conda-pack 打包的完整 Python 环境
+RUN mkdir -p "$MTR_ENV"
+ADD mtr.tar.gz /opt/conda/envs/mtr/
+RUN "$MTR_ENV/bin/python" "$MTR_ENV/bin/conda-unpack"
 
-WORKDIR /workspace/MTR
+# 拷贝算法代码
+COPY . /workspace/MTR
 
-# 先装依赖（利用 Docker 层缓存）
-COPY requirements.txt /workspace/MTR/requirements.txt
-RUN pip install --no-cache-dir     torch==2.0.1+cu118 torchvision==0.15.2+cu118     --extra-index-url https://download.pytorch.org/whl/cu118     && pip install --no-cache-dir -r requirements.txt     && pip install --no-cache-dir         waymo-open-dataset-tf-2-6-0         tensorflow==2.6.0
-
-# 拷贝全部代码
-COPY . /workspace/MTR/
-
-# 编译 CUDA 算子
-RUN python setup.py develop
-
-# 内置 EMA 最佳权重（验证集 mAP 最优；满足"镜像内置权重"要求）
+# 内置模型权重
 RUN mkdir -p /workspace/model
 COPY model/best_model_ema.pth /workspace/model/best_model_ema.pth
 
-# 环境变量（容器内默认路径）
-ENV DATA_ROOT=/workspace/data
-ENV CKPT_PATH=/workspace/model/best_model_ema.pth
-ENV OUTPUT_DIR=/workspace/output
+# 内置参考输出结果（随镜像提供）
+COPY output/result.pkl /workspace/output/result.pkl
 
-# 入口：推理并生成 result.pkl（精度评测与速度评测使用同一权重）
-CMD ["python", "tools/test.py",      "--cfg_file", "cfgs/waymo/mtr_voyah_data.yaml",      "--ckpt", "/workspace/model/best_model_ema.pth",      "--extra_tag", "submission",      "--batch_size", "80",      "--workers", "8",      "--save_to_file",      "--set", "DATA_CONFIG.DATA_ROOT", "/workspace/data",            "DATA_CONFIG.SPLIT_DIR.test", "processed_scenarios_testing_B1_part",            "DATA_CONFIG.INFO_FILE.test", "processed_scenarios_testB1_part_infos.pkl"]
+# 环境变量
+ENV PATH=$MTR_ENV/bin:$PATH \
+    PYTHONPATH=/workspace/MTR
+
+SHELL ["/bin/bash", "-lc"]
+
+WORKDIR /workspace/MTR
+
+# 挂载约定:
+#   /mnt/data          — 数据集根目录
+#   /mnt/output        — 推理结果输出目录
+# 容器启动即执行推理，生成 result.pkl
+CMD ["python", "tools/test.py", \
+     "--cfg_file", "cfgs/waymo/mtr_voyah_data.yaml", \
+     "--ckpt", "/workspace/model/best_model_ema.pth", \
+     "--extra_tag", "submission", \
+     "--batch_size", "80", \
+     "--workers", "8", \
+     "--save_to_file", \
+     "--set", "DATA_CONFIG.DATA_ROOT", "/mnt/data", \
+           "DATA_CONFIG.SPLIT_DIR.test", "processed_scenarios_testing_B1_part", \
+           "DATA_CONFIG.INFO_FILE.test", "processed_scenarios_testB1_part_infos.pkl"]
