@@ -80,9 +80,9 @@ MODEL:
         # Timestamp weight: 'none' or 'fde_weighted' (emphasize final position for minFDE)
         TIMESTAMP_WEIGHT_TYPE: 'fde_weighted'
         # Cumulative displacement parameterization (QCNet-style)
-        USE_CUMULATIVE_DISPLACEMENT: False
+        USE_CUMULATIVE_DISPLACEMENT: True
         # Diffusion trajectory refiner (DiffSemanticFusion-style)
-        USE_DIFFUSION_REFINER: False
+        USE_DIFFUSION_REFINER: True
         DIFFUSION_CONFIG: {
             'TRAJ_DIM': 2,
             'HIDDEN_DIM': 128,

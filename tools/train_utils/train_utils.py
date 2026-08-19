@@ -208,6 +208,16 @@ def train_model(model, optimizer, train_loader, optim_cfg,
                 save_checkpoint(
                     checkpoint_state(model, optimizer, trained_epoch, accumulated_iter), filename=ckpt_name,
                 )
+                # Save EMA checkpoint
+                if ema_model is not None:
+                    ema_ckpt_name = ckpt_save_dir / ('checkpoint_epoch_%d_ema' % trained_epoch)
+                    ema_state = {
+                        'epoch': trained_epoch,
+                        'it': accumulated_iter,
+                        'model_state': {k: v.cpu() for k, v in ema_model.ema_state.items()},
+                        'version': 'mtr+ema',
+                    }
+                    torch.save(ema_state, str(ema_ckpt_name) + '.pth')
 
             # eval the model
             if test_loader is not None and (trained_epoch % ckpt_save_interval == 0 or trained_epoch in [1, 2, 4] or trained_epoch > total_epochs - 10):
@@ -295,6 +305,17 @@ def train_model(model, optimizer, train_loader, optim_cfg,
                                 checkpoint_state(model, epoch=cur_epoch, it=accumulated_iter), filename=ckpt_name,
                             )
                             logger.info(f'Save best model to {ckpt_name}')
+                            # Save EMA best model
+                            if ema_model is not None:
+                                ema_best_name = ckpt_save_dir / 'best_model_ema'
+                                ema_state = {
+                                    'epoch': cur_epoch,
+                                    'it': accumulated_iter,
+                                    'model_state': {k: v.cpu() for k, v in ema_model.ema_state.items()},
+                                    'version': 'mtr+ema',
+                                }
+                                torch.save(ema_state, str(ema_best_name) + '.pth')
+                                logger.info(f'Save EMA best model to {ema_best_name}')
 
                             with open(best_record_file, 'a') as f:
                                 print(f'best_epoch_{trained_epoch} mAP {tb_dict["mAP"]}', file=f)

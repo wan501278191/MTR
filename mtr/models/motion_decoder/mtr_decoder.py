@@ -358,13 +358,13 @@ class MTRDecoder(nn.Module):
                 pred_vel = self.motion_vel_heads[layer_idx](query_content_t).view(num_center_objects, num_query, self.num_future_frames, 2)
 
                 if self.use_cumulative_displacement and layer_idx == 0:
-                    # First layer: predict per-step displacements, cumsum to get positions
+                    # Layer 0 (propose): predict per-step displacements, cumsum to positions
                     # raw_trajs[..., 0:2] = (delta_x, delta_y) per step
                     # raw_trajs[..., 2:5] = (log_std_x, log_std_y, rho) per step
                     pred_positions = torch.cumsum(raw_trajs[..., 0:2], dim=2)
-                    # Monotonically growing uncertainty (QCNet-style)
-                    log_std_x = torch.cumsum(F.elu(raw_trajs[..., 2]) + 1, dim=2) - 1 + raw_trajs[..., 2]
-                    log_std_y = torch.cumsum(F.elu(raw_trajs[..., 3]) + 1, dim=2) - 1 + raw_trajs[..., 3]
+                    # Uncertainty grows with horizon: log_std = cumsum of positive values
+                    log_std_x = torch.cumsum(F.softplus(raw_trajs[..., 2]), dim=2)
+                    log_std_y = torch.cumsum(F.softplus(raw_trajs[..., 3]), dim=2)
                     pred_trajs = torch.stack([
                         pred_positions[..., 0], pred_positions[..., 1],
                         log_std_x, log_std_y, raw_trajs[..., 4]
