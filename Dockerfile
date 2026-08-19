@@ -24,21 +24,25 @@ RUN pip3 install --no-cache-dir \
         waymo-open-dataset-tf-2-6-0 \
         tensorflow==2.6.0
 
-# 拷贝全部代码（含模型权重）
+# 拷贝全部代码
 COPY . /workspace/MTR/
 
 # 编译 CUDA 算子
 RUN python3 setup.py develop
 
+# 内置 EMA 最佳权重（验证集 mAP 最优；满足"镜像内置权重"要求）
+RUN mkdir -p /workspace/model
+COPY model/best_model_ema.pth /workspace/model/best_model_ema.pth
+
 # 环境变量（容器内默认路径）
 ENV DATA_ROOT=/workspace/data
-ENV CKPT_PATH=/workspace/model/checkpoint_epoch_50.pth
+ENV CKPT_PATH=/workspace/model/best_model_ema.pth
 ENV OUTPUT_DIR=/workspace/output
 
-# 入口：推理并生成 result.pkl
+# 入口：推理并生成 result.pkl（精度评测与速度评测使用同一权重）
 CMD ["python3", "tools/test.py", \
      "--cfg_file", "cfgs/waymo/mtr_voyah_data.yaml", \
-     "--ckpt", "/workspace/model/checkpoint_epoch_50.pth", \
+     "--ckpt", "/workspace/model/best_model_ema.pth", \
      "--extra_tag", "submission", \
      "--batch_size", "80", \
      "--workers", "8", \
