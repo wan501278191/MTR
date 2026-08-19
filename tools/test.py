@@ -94,7 +94,7 @@ def get_no_evaluated_ckpt(ckpt_dir, ckpt_record_file, args):
             continue
 
         epoch_id = num_list[-1]
-        if 'optim' in epoch_id:
+        if 'optim' in epoch_id or '_ema' in epoch_id:
             continue
         if float(epoch_id) not in evaluated_ckpt_list and int(float(epoch_id)) >= args.start_epoch:
             return epoch_id, cur_ckpt
