@@ -88,7 +88,9 @@ MODEL:
             'HIDDEN_DIM': 128,
             'NUM_STEPS': 20,
             'LOSS_WEIGHT': 0.1,
-            'REFINEMENT_WEIGHT': 0.3
+            'REFINEMENT_WEIGHT': 0.3,
+            # Refiner is trained but NOT applied at inference (see model.py APPLY_REFINER_AT_INFER)
+            'APPLY_REFINER_AT_INFER': False
         }
 
         LOSS_WEIGHTS: {
@@ -110,7 +112,10 @@ OPTIMIZATION:
     WEIGHT_DECAY: 0.01
 
     SCHEDULER: lambdaLR
-    DECAY_STEP_LIST: [22, 24, 26, 28]
+    # Tuned for NUM_EPOCHS=50: hold base LR until ~80% then cosine-like step decay.
+    # Previous [22,24,26,28] was a 30-epoch schedule that collapsed LR to 6.25e-6
+    # at epoch 28 and froze the model for the remaining 22 epochs.
+    DECAY_STEP_LIST: [40, 44, 47, 49]
     LR_DECAY: 0.5
     LR_CLIP: 0.000001
 

@@ -38,6 +38,10 @@ class MotionTransformer(nn.Module):
             )
             self.diffusion_loss_weight = diff_cfg.get('LOSS_WEIGHT', 0.1)
             self.diffusion_refinement_weight = diff_cfg.get('REFINEMENT_WEIGHT', 0.3)
+            # Refiner is trained jointly but is NOT applied at inference by default:
+            # the well-trained MTR prediction is sharper than the weak diffusion reconstruction.
+            # Set APPLY_REFINER_AT_INFER: True to enable inference refinement.
+            self.apply_refiner_at_infer = diff_cfg.get('APPLY_REFINER_AT_INFER', False)
 
     def forward(self, batch_dict):
         batch_dict = self.context_encoder(batch_dict)
@@ -60,8 +64,9 @@ class MotionTransformer(nn.Module):
             disp_dict.update({'loss': loss.item()})
             return loss, tb_dict, disp_dict
 
-        # Diffusion trajectory refinement at inference
-        if self.use_diffusion_refiner and 'pred_trajs' in batch_dict:
+        # Diffusion trajectory refinement at inference (disabled by default;
+        # the refiner tends to degrade the sharper MTR prediction — enable only if validated)
+        if self.use_diffusion_refiner and self.apply_refiner_at_infer and 'pred_trajs' in batch_dict:
             pred_trajs = batch_dict['pred_trajs']  # (N, 6, T, 7)
             pred_scores = batch_dict['pred_scores']  # (N, 6)
             cond_feat = batch_dict['center_objects_feature']  # (N, D)

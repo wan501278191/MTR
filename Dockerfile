@@ -1,6 +1,6 @@
 # MTR 轨迹预测提交镜像（含模型权重）
 # 赛事要求: Ubuntu 22.04, CUDA < 12.3
-FROM nvidia/cuda:11.8.0-cudnn8-runtime-ubuntu22.04
+FROM nvidia/cuda:11.8.0-cudnn8-devel-ubuntu22.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV PYTHONUNBUFFERED=1
