@@ -74,7 +74,7 @@ def eval_one_epoch(cfg, model, dataloader, epoch_id, logger, dist_test=False, sa
         progress_bar = tqdm.tqdm(total=len(dataloader), leave=True, desc='eval', dynamic_ncols=True)
     start_time = time.time()
 
-    use_tta = cfg.get('TTA', {}).get('ENABLED', False) and not dist_test
+    use_tta = cfg.get('TTA', {}).get('ENABLED', False)
     tta_num_modes = cfg.get('TTA', {}).get('NUM_MODES', cfg.MODEL.MOTION_DECODER.NUM_MOTION_MODES)
 
     pred_dicts = []
