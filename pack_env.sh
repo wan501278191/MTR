@@ -3,14 +3,34 @@
 # 用法: bash pack_env.sh
 set -ex
 
+SITE_PACKAGES="/data/miniforge3/envs/mtr/lib/python3.8/site-packages"
+
 # 安装 conda-pack（如果没装）
 pip install conda-pack 2>/dev/null || conda install -y -c conda-forge conda-pack
 
-# conda-pack 不支持 editable 包，临时卸载 MTR 的 editable 安装
+# === 彻底清除 editable 安装的所有痕迹 ===
+# 1. 卸载 mtr 包
 pip uninstall -y mtr 2>/dev/null || true
-# 清理 egg-link 残留
-find /data/miniforge3/envs/mtr/lib/python3.8/site-packages -name "*.egg-link" -delete 2>/dev/null || true
-find /data/miniforge3/envs/mtr/lib/python3.8/site-packages -name "mtr*.egg*" -delete 2>/dev/null || true
+
+# 2. 删除 egg-link 文件
+rm -f "$SITE_PACKAGES"/*.egg-link 2>/dev/null || true
+
+# 3. 从 easy-install.pth 中删除 MTR 相关行
+if [ -f "$SITE_PACKAGES/easy-install.pth" ]; then
+    grep -v "MTR\|mtr" "$SITE_PACKAGES/easy-install.pth" > /tmp/easy-install.pth || true
+    cp /tmp/easy-install.pth "$SITE_PACKAGES/easy-install.pth"
+    # 如果 pth 文件空了就删掉
+    [ ! -s "$SITE_PACKAGES/easy-install.pth" ] && rm -f "$SITE_PACKAGES/easy-install.pth" || true
+fi
+
+# 4. 删除 mtr 的 egg-info
+rm -rf "$SITE_PACKAGES"/mtr*.egg* 2>/dev/null || true
+rm -rf /root/wanqinghua/MTR/*.egg-info 2>/dev/null || true
+
+# 5. 验证没有 editable 残留
+echo "=== 检查 editable 残留 ==="
+find "$SITE_PACKAGES" -name "*.egg-link" 2>/dev/null || echo "无 egg-link"
+cat "$SITE_PACKAGES/easy-install.pth" 2>/dev/null || echo "无 easy-install.pth"
 
 # 打包 mtr 环境
 conda pack -n mtr -o mtr.tar.gz --force
