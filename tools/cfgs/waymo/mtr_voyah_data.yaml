@@ -74,6 +74,23 @@ MODEL:
         NUM_BASE_MAP_POLYLINES: 256
         NUM_WAYPOINT_MAP_POLYLINES: 128
 
+        # === Optimization configs (from QCNet/DiffSemanticFusion) ===
+        # Loss type: 'gmm_hard' (original), 'gmm_mixture' (soft mode selection), 'laplace_mixture'
+        LOSS_TYPE: 'gmm_mixture'
+        # Timestamp weight: 'none' or 'fde_weighted' (emphasize final position for minFDE)
+        TIMESTAMP_WEIGHT_TYPE: 'fde_weighted'
+        # Cumulative displacement parameterization (QCNet-style)
+        USE_CUMULATIVE_DISPLACEMENT: False
+        # Diffusion trajectory refiner (DiffSemanticFusion-style)
+        USE_DIFFUSION_REFINER: False
+        DIFFUSION_CONFIG: {
+            'TRAJ_DIM': 2,
+            'HIDDEN_DIM': 128,
+            'NUM_STEPS': 20,
+            'LOSS_WEIGHT': 0.1,
+            'REFINEMENT_WEIGHT': 0.3
+        }
+
         LOSS_WEIGHTS: {
             'cls': 1.0, 
             'reg': 1.0, 
@@ -98,3 +115,7 @@ OPTIMIZATION:
     LR_CLIP: 0.000001
 
     GRAD_NORM_CLIP: 1000.0
+
+    # === EMA weight smoothing ===
+    USE_EMA: True
+    EMA_DECAY: 0.999

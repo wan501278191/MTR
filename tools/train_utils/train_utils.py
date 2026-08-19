@@ -10,10 +10,13 @@ import torch
 import tqdm
 from torch.nn.utils import clip_grad_norm_
 
+from mtr.utils.ema_utils import EMAModel
+
 
 def train_one_epoch(model, optimizer, train_loader, accumulated_iter, optim_cfg,
                     rank, tbar, total_it_each_epoch, dataloader_iter, tb_log=None, leave_pbar=False, scheduler=None, show_grad_curve=False,
-                    logger=None, logger_iter_interval=50, cur_epoch=None, total_epochs=None, ckpt_save_dir=None, ckpt_save_time_interval=300):
+                    logger=None, logger_iter_interval=50, cur_epoch=None, total_epochs=None, ckpt_save_dir=None, ckpt_save_time_interval=300,
+                    ema_model=None):
     if total_it_each_epoch == len(train_loader):
         dataloader_iter = iter(train_loader)
 
@@ -53,6 +56,10 @@ def train_one_epoch(model, optimizer, train_loader, accumulated_iter, optim_cfg,
 
         if optimizer_2 is not None:
             optimizer_2.step()
+
+        # Update EMA weights
+        if ema_model is not None:
+            ema_model.update(model)
 
         # scheduler.step() MUST be called AFTER optimizer.step()
         if scheduler is not None:
@@ -147,6 +154,15 @@ def train_model(model, optimizer, train_loader, optim_cfg,
                 scheduler=None, test_loader=None, logger=None, eval_output_dir=None, cfg=None, dist_train=False,
                 logger_iter_interval=50, ckpt_save_time_interval=300):
     accumulated_iter = start_iter
+
+    # === EMA model for weight smoothing ===
+    use_ema = cfg.get('OPTIMIZATION', {}).get('USE_EMA', False) if cfg else False
+    ema_model = None
+    if use_ema and rank == 0:
+        ema_decay = cfg.OPTIMIZATION.get('EMA_DECAY', 0.999)
+        ema_model = EMAModel(model, decay=ema_decay)
+        if logger:
+            logger.info(f'==> EMA enabled with decay={ema_decay}')
     with tqdm.trange(start_epoch, total_epochs, desc='epochs', dynamic_ncols=True, leave=(rank == 0)) as tbar:
         total_it_each_epoch = len(train_loader)
         if merge_all_iters_to_one_epoch:
@@ -173,7 +189,8 @@ def train_model(model, optimizer, train_loader, optim_cfg,
                 dataloader_iter=dataloader_iter,
                 scheduler=scheduler, cur_epoch=cur_epoch, total_epochs=total_epochs,
                 logger=logger, logger_iter_interval=logger_iter_interval,
-                ckpt_save_dir=ckpt_save_dir, ckpt_save_time_interval=ckpt_save_time_interval
+                ckpt_save_dir=ckpt_save_dir, ckpt_save_time_interval=ckpt_save_time_interval,
+                ema_model=ema_model
             )
 
             # save trained model
@@ -195,6 +212,12 @@ def train_model(model, optimizer, train_loader, optim_cfg,
             # eval the model
             if test_loader is not None and (trained_epoch % ckpt_save_interval == 0 or trained_epoch in [1, 2, 4] or trained_epoch > total_epochs - 10):
                 from eval_utils.eval_utils import eval_one_epoch
+
+                # Use EMA weights for evaluation if available
+                if ema_model is not None:
+                    ema_model.apply_to(model)
+                    if logger:
+                        logger.info(f'==> Eval with EMA weights (epoch {trained_epoch})')
 
                 pure_model = model
                 torch.cuda.empty_cache()
@@ -243,6 +266,10 @@ def train_model(model, optimizer, train_loader, optim_cfg,
                         else:
                             tag = f'eval/{key}'
                         tb_log.add_scalar(tag, val, trained_epoch)
+
+                    # Restore original weights after EMA eval
+                    if ema_model is not None:
+                        ema_model.restore(model)
 
                     if 'mAP' in tb_dict:
                         best_record_file = eval_output_dir / ('best_eval_record.txt')

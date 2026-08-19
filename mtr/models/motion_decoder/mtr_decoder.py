@@ -80,6 +80,11 @@ class MTRDecoder(nn.Module):
 
         self.forward_ret_dict = {}
 
+        # === Optimization configs (from QCNet/DiffSemanticFusion) ===
+        self.loss_type = self.model_cfg.get('LOSS_TYPE', 'gmm_hard')
+        self.timestamp_weight_type = self.model_cfg.get('TIMESTAMP_WEIGHT_TYPE', 'none')
+        self.use_cumulative_displacement = self.model_cfg.get('USE_CUMULATIVE_DISPLACEMENT', False)
+
     def build_dense_future_prediction_layers(self, hidden_dim, num_future_frames):
         self.obj_pos_encoding_layer = common_layers.build_mlps(
             c_in=2, mlp_channels=[hidden_dim, hidden_dim, hidden_dim], ret_before_act=True, without_norm=True
@@ -349,8 +354,23 @@ class MTRDecoder(nn.Module):
             query_content_t = query_content.permute(1, 0, 2).contiguous().view(num_center_objects * num_query, -1)
             pred_scores = self.motion_cls_heads[layer_idx](query_content_t).view(num_center_objects, num_query)
             if self.motion_vel_heads is not None:
-                pred_trajs = self.motion_reg_heads[layer_idx](query_content_t).view(num_center_objects, num_query, self.num_future_frames, 5)
+                raw_trajs = self.motion_reg_heads[layer_idx](query_content_t).view(num_center_objects, num_query, self.num_future_frames, 5)
                 pred_vel = self.motion_vel_heads[layer_idx](query_content_t).view(num_center_objects, num_query, self.num_future_frames, 2)
+
+                if self.use_cumulative_displacement and layer_idx == 0:
+                    # First layer: predict per-step displacements, cumsum to get positions
+                    # raw_trajs[..., 0:2] = (delta_x, delta_y) per step
+                    # raw_trajs[..., 2:5] = (log_std_x, log_std_y, rho) per step
+                    pred_positions = torch.cumsum(raw_trajs[..., 0:2], dim=2)
+                    # Monotonically growing uncertainty (QCNet-style)
+                    log_std_x = torch.cumsum(F.elu(raw_trajs[..., 2]) + 1, dim=2) - 1 + raw_trajs[..., 2]
+                    log_std_y = torch.cumsum(F.elu(raw_trajs[..., 3]) + 1, dim=2) - 1 + raw_trajs[..., 3]
+                    pred_trajs = torch.stack([
+                        pred_positions[..., 0], pred_positions[..., 1],
+                        log_std_x, log_std_y, raw_trajs[..., 4]
+                    ], dim=-1)
+                else:
+                    pred_trajs = raw_trajs
                 pred_trajs = torch.cat((pred_trajs, pred_vel), dim=-1)
             else:
                 pred_trajs = self.motion_reg_heads[layer_idx](query_content_t).view(num_center_objects, num_query, self.num_future_frames, 7)
@@ -396,12 +416,41 @@ class MTRDecoder(nn.Module):
             assert pred_trajs.shape[-1] == 7
             pred_trajs_gmm, pred_vel = pred_trajs[:, :, :, 0:5], pred_trajs[:, :, :, 5:7]
 
-            loss_reg_gmm, center_gt_positive_idx = loss_utils.nll_loss_gmm_direct(
-                pred_scores=pred_scores, pred_trajs=pred_trajs_gmm,
-                gt_trajs=center_gt_trajs[:, :, 0:2], gt_valid_mask=center_gt_trajs_mask,
-                pre_nearest_mode_idxs=center_gt_positive_idx,
-                timestamp_loss_weight=None, use_square_gmm=False,
-            )
+            # Timestamp loss weight (emphasize final position for minFDE)
+            if self.timestamp_weight_type == 'fde_weighted':
+                num_ts = center_gt_trajs_mask.shape[1]
+                ts_weight = torch.ones(num_ts, device=self.device)
+                ts_weight[-1] = 2.0  # double weight on final position
+                ts_weight = ts_weight / ts_weight.sum() * num_ts  # normalize
+            else:
+                ts_weight = None
+
+            # Loss computation with configurable type
+            if self.loss_type == 'gmm_mixture':
+                # Soft mode selection via logsumexp (QCNet-style)
+                loss_reg_gmm, center_gt_positive_idx = loss_utils.mixture_nll_loss(
+                    pred_scores=pred_scores, pred_trajs=pred_trajs_gmm,
+                    gt_trajs=center_gt_trajs[:, :, 0:2], gt_valid_mask=center_gt_trajs_mask,
+                    pre_nearest_mode_idxs=center_gt_positive_idx,
+                    timestamp_loss_weight=ts_weight, loss_type='gmm', use_square_gmm=False,
+                )
+            elif self.loss_type == 'laplace_mixture':
+                # Laplace NLL with soft mode selection
+                pred_trajs_lap = pred_trajs_gmm[:, :, :, 0:4]  # use first 4 dims as (mu_x, mu_y, log_sx, log_sy)
+                loss_reg_gmm, center_gt_positive_idx = loss_utils.mixture_nll_loss(
+                    pred_scores=pred_scores, pred_trajs=pred_trajs_lap,
+                    gt_trajs=center_gt_trajs[:, :, 0:2], gt_valid_mask=center_gt_trajs_mask,
+                    pre_nearest_mode_idxs=center_gt_positive_idx,
+                    timestamp_loss_weight=ts_weight, loss_type='laplace',
+                )
+            else:
+                # Original hard argmin GMM NLL
+                loss_reg_gmm, center_gt_positive_idx = loss_utils.nll_loss_gmm_direct(
+                    pred_scores=pred_scores, pred_trajs=pred_trajs_gmm,
+                    gt_trajs=center_gt_trajs[:, :, 0:2], gt_valid_mask=center_gt_trajs_mask,
+                    pre_nearest_mode_idxs=center_gt_positive_idx,
+                    timestamp_loss_weight=ts_weight, use_square_gmm=False,
+                )
 
             pred_vel = pred_vel[torch.arange(num_center_objects), center_gt_positive_idx]
             loss_reg_vel = F.l1_loss(pred_vel, center_gt_trajs[:, :, 2:4], reduction='none')

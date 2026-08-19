@@ -24,6 +24,20 @@ class MotionTransformer(nn.Module):
             config=self.model_cfg.MOTION_DECODER
         )
 
+        # === Optional: Diffusion trajectory refiner (from DiffSemanticFusion) ===
+        self.use_diffusion_refiner = self.model_cfg.MOTION_DECODER.get('USE_DIFFUSION_REFINER', False)
+        if self.use_diffusion_refiner:
+            from mtr.models.diffusion import TrajectoryDiffusionRefiner
+            diff_cfg = self.model_cfg.MOTION_DECODER.get('DIFFUSION_CONFIG', {})
+            self.diffusion_refiner = TrajectoryDiffusionRefiner(
+                traj_dim=diff_cfg.get('TRAJ_DIM', 2),
+                cond_dim=self.model_cfg.MOTION_DECODER.D_MODEL,
+                hidden_dim=diff_cfg.get('HIDDEN_DIM', 128),
+                num_diffusion_steps=diff_cfg.get('NUM_STEPS', 20),
+            )
+            self.diffusion_loss_weight = diff_cfg.get('LOSS_WEIGHT', 0.1)
+            self.diffusion_refinement_weight = diff_cfg.get('REFINEMENT_WEIGHT', 0.3)
+
     def forward(self, batch_dict):
         batch_dict = self.context_encoder(batch_dict)
         batch_dict = self.motion_decoder(batch_dict)
@@ -31,9 +45,38 @@ class MotionTransformer(nn.Module):
         if self.training:
             loss, tb_dict, disp_dict = self.get_loss()
 
+            # Diffusion refiner training loss
+            if self.use_diffusion_refiner:
+                # Use GT trajectory as target, center object feature as condition
+                gt_trajs = batch_dict['input_dict']['center_gt_trajs'][:, :, 0:2]  # (N, T, 2)
+                # Use the center object feature as conditioning
+                cond_feat = batch_dict['center_objects_feature']  # (N, D)
+                diff_loss = self.diffusion_refiner.compute_loss(gt_trajs, cond_feat)
+                loss = loss + self.diffusion_loss_weight * diff_loss
+                tb_dict['diffusion_loss'] = diff_loss.item()
+
             tb_dict.update({'loss': loss.item()})
             disp_dict.update({'loss': loss.item()})
             return loss, tb_dict, disp_dict
+
+        # Diffusion trajectory refinement at inference
+        if self.use_diffusion_refiner and 'pred_trajs' in batch_dict:
+            pred_trajs = batch_dict['pred_trajs']  # (N, 6, T, 7)
+            pred_scores = batch_dict['pred_scores']  # (N, 6)
+            cond_feat = batch_dict['center_objects_feature']  # (N, D)
+
+            # Refine the best-scoring mode for each center object
+            best_idx = pred_scores.argmax(dim=-1)  # (N,)
+            N = pred_trajs.shape[0]
+            best_trajs = pred_trajs[torch.arange(N), best_idx, :, 0:2]  # (N, T, 2)
+
+            refined_trajs = self.diffusion_refiner.refine_trajectory(
+                best_trajs, cond_feat, refinement_weight=self.diffusion_refinement_weight
+            )
+
+            # Replace best mode's xy with refined version
+            pred_trajs[torch.arange(N), best_idx, :, 0:2] = refined_trajs
+            batch_dict['pred_trajs'] = pred_trajs
 
         return batch_dict
 
