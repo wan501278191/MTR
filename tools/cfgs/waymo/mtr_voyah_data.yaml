@@ -13,7 +13,7 @@ DATA_CONFIG:
         'test': 'processed_scenarios_val_infos.pkl'
     }
 
-    DATA_FILE_PREFIX: ''  # company data uses enc_*.pkl naming (scenario_id already contains enc_ prefix)
+    DATA_FILE_PREFIX: ''
 
     SAMPLE_INTERVAL: {
         'train': 1, 
@@ -32,10 +32,8 @@ DATA_CONFIG:
     CENTER_OFFSET_OF_MAP: &center_offset [30.0, 0]
 
 
-
 MODEL:
     CONTEXT_ENCODER:
-        # [Opt 6] Shared scene encoder with factorized attention + polar/Fourier
         NAME: MTREncoder
 
         NUM_OF_ATTN_NEIGHBORS: 16
@@ -54,10 +52,6 @@ MODEL:
         DROPOUT_OF_ATTN: 0.1 
 
         USE_LOCAL_ATTN: True
-
-        # [Opt 6b] polar + Fourier position encoding
-        USE_FOURIER_POS: false
-        FOURIER_NUM_FREQS: 8
 
     MOTION_DECODER:
         NAME: MTRDecoder
@@ -80,33 +74,30 @@ MODEL:
         NUM_WAYPOINT_MAP_POLYLINES: 128
 
         LOSS_WEIGHTS: {
-            'cls': 2.0,
-            'reg': 1.0,
+            'cls': 1.0, 
+            'reg': 1.0, 
             'vel': 0.5
         }
 
-        # Label smoothing for classification loss (prevents overconfidence, improves mAP ranking)
-        LABEL_SMOOTHING: 0.1
-
         NMS_DIST_THRESH: 2.5
 
-        # [Opt 1] Temperature scaling — learnable parameter (default 1.0, calibrate post-training)
-
-        # [Opt 2] aWTA loss — annealed WTA replacing standard WTA
+        # === Inference-only optimizations (do NOT affect training) ===
+        # [Opt 1] Temperature scaling — learnable param (default 1.0, calibrate post-training)
+        # [Opt 2] aWTA loss — OFF (use standard WTA)
         AWTA:
             ENABLED: false
             START_TEMP: 10.0
             END_TEMP: 0.1
             TOTAL_EPOCHS: 50
 
-        # [Opt 3] Kinematic feasibility post-processing
+        # [Opt 3] Kinematic filter — inference post-processing
         USE_KINEMATIC_FILTER: true
         KINEMATIC_MAX_SPEED: 30.0
         KINEMATIC_MAX_ACCEL: 8.0
         KINEMATIC_MAX_STEER_DEG: 35.0
         KINEMATIC_PENALIZE_ONLY: true
 
-        # [Opt 5] Dynamic intention query count
+        # [Opt 5] Dynamic query — OFF
         DYNAMIC_QUERY:
             ENABLED: false
             LOW_THRESH: 10
@@ -116,7 +107,7 @@ MODEL:
             HIGH_QUERY: 128
 
 
-# [Opt 4] Test-Time Augmentation (eval only)
+# [Opt 4] TTA — inference only
 TTA:
     ENABLED: true
     NUM_MODES: 6
@@ -124,7 +115,6 @@ TTA:
 
 OPTIMIZATION:
     BATCH_SIZE_PER_GPU: 1
-    #NUM_EPOCHS: 30
     NUM_EPOCHS: 30
 
     OPTIMIZER: AdamW
