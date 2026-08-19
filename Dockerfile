@@ -1,5 +1,5 @@
-# MTR 轨迹预测提交镜像
-# 赛事要求: Ubuntu 20.04/22.04, CUDA < 12.3
+# MTR 轨迹预测提交镜像（含模型权重）
+# 赛事要求: Ubuntu 22.04, CUDA < 12.3
 FROM nvidia/cuda:11.8.0-cudnn8-runtime-ubuntu22.04
 
 ENV DEBIAN_FRONTEND=noninteractive
@@ -24,18 +24,13 @@ RUN pip3 install --no-cache-dir \
         waymo-open-dataset-tf-2-6-0 \
         tensorflow==2.6.0
 
-# 拷贝代码
+# 拷贝全部代码（含模型权重）
 COPY . /workspace/MTR/
 
 # 编译 CUDA 算子
 RUN python3 setup.py develop
 
-# 数据和模型通过 volume 挂载，不入镜像
-# docker run -v /host/data:/workspace/data \
-#            -v /host/model:/workspace/model \
-#            -v /host/output:/workspace/output \
-#            mtr-voyah-submission
-
+# 环境变量（容器内默认路径）
 ENV DATA_ROOT=/workspace/data
 ENV CKPT_PATH=/workspace/model/checkpoint_epoch_50.pth
 ENV OUTPUT_DIR=/workspace/output
