@@ -103,7 +103,16 @@ echo "=== 演示图片列表 ==="
 find 演示图片 -name "*.png" -exec ls -lh {} \; 2>/dev/null || echo "警告: 未生成演示图片"
 
 # === 4. 构建 Docker 镜像 ===
-echo "=== 4. 构建 Docker 镜像 ==="
+echo "=== 4. 加载本地 CUDA 基础镜像 ==="
+CUDA_TAR=$(find /root -maxdepth 3 -name "cuda11.8*amd64.tar" 2>/dev/null | head -1)
+if [ -n "$CUDA_TAR" ]; then
+    echo "加载 $CUDA_TAR ..."
+    docker load -i "$CUDA_TAR"
+else
+    echo "未找到本地 cuda11.8 tar 包，尝试直接构建（需要网络）..."
+fi
+
+echo "=== 4.5. 构建 Docker 镜像 ==="
 docker build -t ${IMAGE_NAME} .
 
 echo "=== 5. 导出 Docker 镜像为 Tar 包 ==="
