@@ -187,7 +187,7 @@ docker run --gpus all --rm --shm-size=8g \
         --cfg_file cfgs/waymo/mtr_voyah_data.yaml \
         --ckpt /workspace/model/best_model.pth \
         --num_runs 5 \
-        --set DATA_CONFIG.DATA_ROOT /mnt/data"
+        --data_root /mnt/data"
 
 echo ""
 echo "--- 7.5 需求5: 性能评估 (Docker 内执行) ---"

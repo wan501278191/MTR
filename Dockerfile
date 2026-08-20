@@ -12,7 +12,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 RUN mkdir -p "$MTR_ENV"
-ADD mtr.tar.gz /opt/conda/envs/mtr/
+# 单独 COPY mtr.tar.gz（.dockerignore 已排除 *.tar.gz，但显式 COPY 仍可用）
+COPY mtr.tar.gz /tmp/mtr.tar.gz
+RUN tar xzf /tmp/mtr.tar.gz -C "$MTR_ENV" && rm /tmp/mtr.tar.gz
 
 # 清理解压后的环境（保留 __pycache__，TF 依赖编译缓存）
 RUN rm -rf "$MTR_ENV/pkgs" 2>/dev/null; \
@@ -48,16 +50,8 @@ RUN TF_INT="$MTR_ENV/lib/python3.8/site-packages/tensorflow/_api/v2/__internal__
 
 WORKDIR /workspace
 
-# 拷贝算法代码
+# 拷贝算法代码（.dockerignore 已排除 mtr.tar.gz 等大文件）
 COPY . /workspace/MTR
-
-# 删除 COPY . 带入的大文件（ADD 阶段已用，不需要保留在最终镜像）
-RUN rm -rf /workspace/MTR/mtr.tar.gz \
-    /workspace/MTR/mtr_voyah_submission.tar.gz \
-    /workspace/MTR/*.tar.gz \
-    /workspace/MTR/output /workspace/MTR/test_output \
-    /workspace/MTR/swanlog /workspace/MTR/build \
-    /workspace/MTR/MotionTransformer.egg-info 2>/dev/null; true
 
 # 内置模型权重
 RUN mkdir -p /workspace/model

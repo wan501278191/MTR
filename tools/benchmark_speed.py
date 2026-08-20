@@ -1,8 +1,7 @@
 """性能测速脚本：使用真实数据测量单 batch 平均推理耗时
 
 用法:
-    python benchmark_speed.py --cfg_file cfgs/waymo/mtr_voyah_data.yaml --ckpt /workspace/model/best_model.pth
-    python benchmark_speed.py --cfg_file cfgs/waymo/mtr_voyah_data.yaml --ckpt model/best_model.pth --set DATA_CONFIG.DATA_ROOT /mnt/data
+    python benchmark_speed.py --cfg_file cfgs/waymo/mtr_voyah_data.yaml --ckpt /workspace/model/best_model.pth --data_root /mnt/data
 """
 import argparse
 import logging
@@ -23,8 +22,7 @@ def main():
     parser.add_argument("--num_runs", type=int, default=10, help="推理次数")
     parser.add_argument("--batch_size", type=int, default=1, help="测速 batch 大小")
     parser.add_argument("--workers", type=int, default=4, help="dataloader workers")
-    parser.add_argument("--set", dest='set_cfgs', default=None, nargs=argparse.REMAINDER,
-                        help="覆盖配置项，如 --set DATA_CONFIG.DATA_ROOT /mnt/data")
+    parser.add_argument("--data_root", type=str, default=None, help="覆盖数据集根目录")
     args = parser.parse_args()
 
     logger = logging.getLogger("benchmark")
@@ -34,25 +32,9 @@ def main():
     cfg.TAG = Path(args.cfg_file).stem
     cfg.EXP_GROUP_PATH = '/'.join(args.cfg_file.split('/')[1:-1])
 
-    # 覆盖配置项
-    if args.set_cfgs:
-        from mtr.config import cfg
-        for i in range(0, len(args.set_cfgs), 2):
-            key, val = args.set_cfgs[i], args.set_cfgs[i+1]
-            key_list = key.split('.')
-            d = cfg
-            for k in key_list[:-1]:
-                d = d[k]
-            # 尝试转换类型
-            try:
-                val = int(val)
-            except ValueError:
-                try:
-                    val = float(val)
-                except ValueError:
-                    pass
-            d[key_list[-1]] = val
-            logger.info(f"覆盖配置: {key} = {val}")
+    if args.data_root:
+        cfg.DATA_CONFIG.DATA_ROOT = args.data_root
+        logger.info(f"DATA_ROOT 覆盖为: {args.data_root}")
 
     # 用验证集加载一个真实 batch
     test_set, test_loader, _ = build_dataloader(

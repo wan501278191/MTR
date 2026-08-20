@@ -20,9 +20,8 @@ build/
 # output 和 test_output 目录不进镜像
 output/
 test_output/
-# 忽略大 tar 包（构建产物），但保留 conda-pack 环境包
+# 彻底排除所有 tar 包（包括 mtr.tar.gz，stage1 用单独 COPY 引入）
 *.tar
 *.tar.gz
-!mtr.tar.gz
 演示图片/
 *.md
