@@ -3,6 +3,9 @@
 # 在远程训练机 /root/wanqinghua/MTR 目录下执行
 set -ex
 
+# 启用 BuildKit 加速构建（并行 stage、缓存复用）
+export DOCKER_BUILDKIT=1
+
 IMAGE_NAME="mtr-voyah-submission"
 TAR_NAME="mtr_voyah_submission.tar.gz"
 MTR_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -32,6 +35,36 @@ if [ ! -f mtr.tar.gz ]; then
     bash pack_env.sh
 fi
 ls -lh mtr.tar.gz
+
+# 确保 val_infos.pkl 在 data/ 目录下（benchmark_speed.py 和 eval 需要）
+DATA_DIR="$(cd "$MTR_DIR/../data" && pwd)"
+if [ ! -f data/processed_scenarios_val_infos.pkl ]; then
+    if [ -f "$DATA_DIR/processed_scenarios_val_infos.pkl" ]; then
+        cp "$DATA_DIR/processed_scenarios_val_infos.pkl" data/processed_scenarios_val_infos.pkl
+        echo "已拷贝 processed_scenarios_val_infos.pkl 到 data/"
+    else
+        echo "警告: processed_scenarios_val_infos.pkl 未找到，benchmark_speed.py 在 Docker 内会失败"
+    fi
+fi
+ls -lh data/processed_scenarios_val_infos.pkl 2>/dev/null || true
+
+# 确保 testA_infos.pkl 在 data/ 目录下（smoke test 需要）
+if [ ! -f data/processed_scenarios_testA_part_infos.pkl ]; then
+    if [ -f "$DATA_DIR/processed_scenarios_testA_part_infos.pkl" ]; then
+        cp "$DATA_DIR/processed_scenarios_testA_part_infos.pkl" data/processed_scenarios_testA_part_infos.pkl
+        echo "已拷贝 processed_scenarios_testA_part_infos.pkl 到 data/"
+    fi
+fi
+ls -lh data/processed_scenarios_testA_part_infos.pkl 2>/dev/null || true
+
+# 确保 testB1_infos.pkl 在 data/ 目录下（测试集推理需要）
+if [ ! -f data/processed_scenarios_testB1_part_infos.pkl ]; then
+    if [ -f "$DATA_DIR/processed_scenarios_testB1_part_infos.pkl" ]; then
+        cp "$DATA_DIR/processed_scenarios_testB1_part_infos.pkl" data/processed_scenarios_testB1_part_infos.pkl
+        echo "已拷贝 processed_scenarios_testB1_part_infos.pkl 到 data/"
+    fi
+fi
+ls -lh data/processed_scenarios_testB1_part_infos.pkl 2>/dev/null || true
 
 # === 0.5. 清空输出目录 ===
 echo "=== 0.5. 清空输出目录（已在步骤0清理，确保目录存在）==="
