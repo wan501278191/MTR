@@ -5,7 +5,12 @@ __pycache__/
 *.egg-info/
 .DS_Store
 *.bak
-data/
+# 排除数据集大文件目录，但保留 data/waymo/ 意图点文件
+data/processed_scenarios_training/
+data/processed_scenarios_validation/
+data/processed_scenarios_testing_A_part/
+data/processed_scenarios_testing_A_full/
+data/processed_scenarios_testing_B1_part/
 swanlog/
 *.log
 build/
