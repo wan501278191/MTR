@@ -6,6 +6,11 @@ set -ex
 SITE_PACKAGES="/data/miniforge3/envs/mtr/lib/python3.8/site-packages"
 CONDA_ENV="/data/miniforge3/envs/mtr"
 
+# === 0. 清理上一次的过程文件和产物 ===
+echo "=== 0. 清理旧产物 ==="
+rm -f mtr.tar.gz
+rm -rf "$CONDA_ENV/.cache" "$CONDA_ENV/pkgs" 2>/dev/null || true
+
 # 安装 conda-pack（如果没装）
 pip install conda-pack 2>/dev/null || conda install -y -c conda-forge conda-pack
 

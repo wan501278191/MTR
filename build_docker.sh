@@ -9,7 +9,15 @@ MTR_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 cd "$MTR_DIR"
 
-echo "=== 0. 检查前置文件 ==="
+# === 0. 清理上一次的过程文件和产物 ===
+echo "=== 0. 清理旧产物 ==="
+rm -rf test_output 演示图片
+rm -f mtr_voyah_submission.tar.gz mtr_voyah_submission.tar
+docker rm -f $(docker ps -aq --filter "ancestor=${IMAGE_NAME}") 2>/dev/null || true
+docker rmi -f ${IMAGE_NAME} 2>/dev/null || true
+echo "清理完成"
+
+echo "=== 0.1 检查前置文件 ==="
 
 # 确保模型权重存在
 if [ ! -f model/best_model.pth ]; then
@@ -26,7 +34,7 @@ fi
 ls -lh mtr.tar.gz
 
 # === 0.5. 清空输出目录 ===
-echo "=== 0.5. 清空输出目录 ==="
+echo "=== 0.5. 清空输出目录（已在步骤0清理，确保目录存在）==="
 rm -rf test_output 演示图片
 mkdir -p test_output 演示图片/eval 演示图片/test
 
