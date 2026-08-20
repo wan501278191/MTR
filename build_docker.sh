@@ -120,11 +120,15 @@ else
     echo "未找到本地 cuda11.8 tar 包，尝试直接构建（需要网络）..."
 fi
 
-echo "=== 5. 构建 Docker 镜像 ==="
+echo "=== 5. 构建 Docker 镜像（多阶段构建）==="
 docker build -t ${IMAGE_NAME} .
+
+echo "=== 5.5 镜像大小 ==="
+docker images ${IMAGE_NAME} --format "镜像: {{.Repository}}:{{.Tag}}  大小: {{.Size}}"
 
 echo "=== 6. 导出 Docker 镜像为 Tar 包 ==="
 docker save -o ${TAR_NAME} ${IMAGE_NAME}
+ls -lh ${TAR_NAME}
 
 echo "=== 7. 镜像构建后自动验证操作手册 ==="
 echo ""

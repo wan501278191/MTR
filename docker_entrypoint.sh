@@ -2,10 +2,10 @@
 # 容器入口脚本：执行推理后，将 result.pkl 拷贝到 /mnt/output
 set -e
 
-cd /workspace/MTR
+cd /workspace/MTR/tools
 
 # 执行推理
-python tools/test.py \
+python test.py \
     --cfg_file cfgs/waymo/mtr_voyah_data.yaml \
     --ckpt /workspace/model/best_model.pth \
     --extra_tag submission \
@@ -18,9 +18,9 @@ python tools/test.py \
 
 # 推理结果保存到 output/ 目录，拷贝到 /mnt/output 供评委获取
 mkdir -p /mnt/output
-RESULT_PKL=$(find output -name "result.pkl" -path "*submission*" | head -1)
+RESULT_PKL=$(find /workspace/MTR/output -name "result.pkl" -path "*submission*" | head -1)
 if [ -z "$RESULT_PKL" ]; then
-    RESULT_PKL=$(find output -name "result.pkl" | head -1)
+    RESULT_PKL=$(find /workspace/MTR/output -name "result.pkl" | head -1)
 fi
 if [ -z "$RESULT_PKL" ]; then
     echo "错误: 推理后未找到 result.pkl" >&2

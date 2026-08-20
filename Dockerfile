@@ -1,23 +1,48 @@
 # MTR 轨迹预测提交镜像（含模型权重）
 # 赛事要求: Ubuntu 22.04, CUDA < 12.3
-# 用 conda-pack 打包完整环境，构建时无需网络
+# 多阶段构建：stage-1 解压+清理 conda 环境，stage-2 最终运行镜像
+
+# ===== Stage 1: 解压并清理 conda 环境 =====
+FROM nvidia/cuda:11.8.0-cudnn8-runtime-ubuntu22.04 AS env-builder
+
+ENV MTR_ENV=/opt/conda/envs/mtr
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates findutils \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN mkdir -p "$MTR_ENV"
+ADD mtr.tar.gz /opt/conda/envs/mtr/
+
+# 清理解压后的环境
+RUN find "$MTR_ENV" -type d -name '__pycache__' -exec rm -rf {} + 2>/dev/null; \
+    find "$MTR_ENV" -name '*.pyc' -delete 2>/dev/null; \
+    find "$MTR_ENV" -name '*.pyo' -delete 2>/dev/null; \
+    rm -rf "$MTR_ENV/pkgs" 2>/dev/null; \
+    rm -rf "$MTR_ENV/.cache" 2>/dev/null; \
+    find "$MTR_ENV/lib/python3.8/site-packages" -type d -name 'tests' -exec rm -rf {} + 2>/dev/null; \
+    rm -rf "$MTR_ENV/lib/python3.8/site-packages/triton" 2>/dev/null; \
+    rm -rf "$MTR_ENV/lib/python3.8/site-packages/torchinductor" 2>/dev/null; \
+    true
+
+# ===== Stage 2: 最终运行镜像 =====
 FROM nvidia/cuda:11.8.0-cudnn8-runtime-ubuntu22.04
 
 ENV DEBIAN_FRONTEND=noninteractive \
     TZ=Asia/Shanghai \
     MTR_ENV=/opt/conda/envs/mtr
 
+# 仅安装运行时依赖（不含 build-essential / ninja-build 等开发工具）
 RUN apt-get update && apt-get install -y --no-install-recommends \
     bash ca-certificates libglib2.0-0 libsm6 libxext6 libxrender1 \
-    tzdata build-essential ninja-build \
+    tzdata \
     && rm -rf /var/lib/apt/lists/*
 
-WORKDIR /workspace
-
-# 解压 conda-pack 打包的完整 Python 环境
-RUN mkdir -p "$MTR_ENV"
-ADD mtr.tar.gz /opt/conda/envs/mtr/
+# 从 stage-1 复制已清理的 conda 环境
+COPY --from=env-builder "$MTR_ENV" "$MTR_ENV"
 RUN "$MTR_ENV/bin/python" "$MTR_ENV/bin/conda-unpack"
+
+WORKDIR /workspace
 
 # 拷贝算法代码
 COPY . /workspace/MTR
