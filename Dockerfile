@@ -40,12 +40,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY --from=env-builder "$MTR_ENV" "$MTR_ENV"
 RUN "$MTR_ENV/bin/python" "$MTR_ENV/bin/conda-unpack"
 
-# 修复 conda-pack 可能导致的 TF 缺失模块（tensorflow._api.v2.__internal__.test）
-# 始终覆盖为空 __init__.py，确保没有残留的错误内容
-RUN TF_INT="$MTR_ENV/lib/python3.8/site-packages/tensorflow/_api/v2/__internal__"; \
-    mkdir -p "$TF_INT/test" && \
-    touch "$TF_INT/test/__init__.py" && \
-    echo "已修复 TF test 模块"; true
+# 修复 conda-pack 旧脚本全局删除 test 目录导致的 TF circular import
+# 在 tensorflow/_api 下每一层都重建空的 test/__init__.py
+RUN TF_API="$MTR_ENV/lib/python3.8/site-packages/tensorflow/_api" && \
+    find "$TF_API" -type d | while read d; do \
+        mkdir -p "$d/test" && touch "$d/test/__init__.py"; \
+    done && \
+    echo "已修复所有 TF test 模块"
 
 WORKDIR /workspace
 
