@@ -38,6 +38,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY --from=env-builder "$MTR_ENV" "$MTR_ENV"
 RUN "$MTR_ENV/bin/python" "$MTR_ENV/bin/conda-unpack"
 
+# 修复 conda-pack 可能导致的 TF 缺失模块（tensorflow._api.v2.__internal__.test）
+RUN TF_INT="$MTR_ENV/lib/python3.8/site-packages/tensorflow/_api/v2/__internal__"; \
+    if [ ! -d "$TF_INT/test" ]; then \
+        mkdir -p "$TF_INT/test" && \
+        echo "from tensorflow.python.util import module_wrapper as _module_wrapper; test = _module_wrapper.module_wrapper(__name__)" > "$TF_INT/test/__init__.py" && \
+        echo "已修复 TF test 模块"; \
+    fi; true
+
 WORKDIR /workspace
 
 # 拷贝算法代码

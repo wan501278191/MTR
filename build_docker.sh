@@ -179,13 +179,15 @@ docker run --gpus all --rm --shm-size=8g \
 echo ""
 echo "--- 7.4 需求4: 性能测速 (单 batch 推理耗时) ---"
 docker run --gpus all --rm --shm-size=8g \
+    -v $(pwd)/../data:/mnt/data \
     -v /tmp/mtr_verify_output:/mnt/output \
     --entrypoint /bin/bash \
     ${IMAGE_NAME} \
     -c "cd /workspace/MTR/tools && python benchmark_speed.py \
         --cfg_file cfgs/waymo/mtr_voyah_data.yaml \
         --ckpt /workspace/model/best_model.pth \
-        --num_runs 5"
+        --num_runs 5 \
+        --set DATA_CONFIG.DATA_ROOT /mnt/data"
 
 echo ""
 echo "--- 7.5 需求5: 性能评估 (Docker 内执行) ---"
