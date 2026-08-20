@@ -274,7 +274,8 @@ docker run --gpus all --rm --shm-size=8g \
         --batch_size 4 \
         --workers 4 \
         --save_to_file \
-        --set DATA_CONFIG.SPLIT_DIR.test processed_scenarios_validation \
+        --set DATA_CONFIG.DATA_ROOT /mnt/data \
+              DATA_CONFIG.SPLIT_DIR.test processed_scenarios_validation \
               DATA_CONFIG.INFO_FILE.test processed_scenarios_val_infos.pkl"
 
 echo ""
