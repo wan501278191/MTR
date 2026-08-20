@@ -162,7 +162,9 @@ find 演示图片 -name "*.png" -o -name "*.gif" | xargs ls -lh 2>/dev/null || e
 
 # === 4. 清理 Docker 并构建镜像 ===
 echo "=== 4. 清理 Docker 无用资源 ==="
-docker system prune -af
+# 只清理悬挂资源，保留 base image 和 build cache 用于加速重建
+docker container prune -f 2>/dev/null || true
+docker image prune -f 2>/dev/null || true  # 只删 dangling images，保留有用缓存
 
 echo "=== 4.5. 加载本地 CUDA 基础镜像 ==="
 CUDA_TAR=$(find /root -maxdepth 3 -name "cuda11.8*amd64.tar" 2>/dev/null | head -1)
@@ -209,6 +211,12 @@ else
     exit 1
 fi
 
+# 复制验证集推理结果用于 7.5 评估（验证集有真值，测试集没有）
+if [ -f test_output/eval_result.pkl ]; then
+    cp test_output/eval_result.pkl /tmp/mtr_verify_output/eval_result.pkl
+    echo "已复制验证集推理结果用于评估"
+fi
+
 echo ""
 echo "--- 7.3 需求3: 结果验证 (verify_result.py) ---"
 docker run --gpus all --rm --shm-size=8g \
@@ -248,7 +256,7 @@ docker run --gpus all --rm --shm-size=8g \
     --entrypoint /bin/bash \
     ${IMAGE_NAME} \
     -c "cd /workspace/MTR/tools/eval_scripts && python eval_gt_and_pred.py \
-        --pred_file /mnt/output/result.pkl \
+        --pred_file /mnt/output/eval_result.pkl \
         --gt_file /mnt/output/gt_data.pkl \
         --eval_second 3"
 
