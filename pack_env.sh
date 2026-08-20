@@ -62,8 +62,9 @@ rm -rf "$CONDA_ENV/.cache" 2>/dev/null || true
 rm -rf "$CONDA_ENV/pkgs" 2>/dev/null || true
 
 # 仅清理第三方包的 __pycache__（跳过 conda 管理的标准库和 setuptools）
-find "$SITE_PACKAGES" -type d -name '__pycache__' -not -path '*/pkg_resources/*' -exec rm -rf {} + 2>/dev/null || true
-find "$SITE_PACKAGES" -name '*.pyc' -not -path '*/pkg_resources/*' -delete 2>/dev/null || true
+# 保留 __pycache__（TF 等包的 circular import 依赖编译缓存）
+# find "$SITE_PACKAGES" -type d -name '__pycache__' -exec rm -rf {} + 2>/dev/null || true
+# find "$SITE_PACKAGES" -name '*.pyc' -delete 2>/dev/null || true
 
 # aotriton/shader caches（推理不需要）
 rm -rf "$SITE_PACKAGES/torchinductor" 2>/dev/null || true

@@ -188,25 +188,17 @@ docker run --gpus all --rm --shm-size=8g \
         --num_runs 5"
 
 echo ""
-echo "--- 7.5 需求5: 性能评估 (get_gt_data.py + eval_gt_and_pred.py) ---"
-# 生成 GT 数据
-docker run --gpus all --rm --shm-size=8g \
-    -v $(pwd)/../data:/mnt/data \
-    -v /tmp/mtr_verify_output:/mnt/output \
-    --entrypoint /bin/bash \
-    ${IMAGE_NAME} \
-    -c "cd /workspace/MTR/tools/eval_scripts && python get_gt_data.py \
-        --processed_dir /mnt/data/processed_scenarios_validation \
-        --output_file /mnt/output/gt_data.pkl"
-# 评估
-docker run --gpus all --rm --shm-size=8g \
-    -v /tmp/mtr_verify_output:/mnt/output \
-    --entrypoint /bin/bash \
-    ${IMAGE_NAME} \
-    -c "cd /workspace/MTR/tools/eval_scripts && python eval_gt_and_pred.py \
-        --pred_file /mnt/output/result.pkl \
-        --gt_file /mnt/output/gt_data.pkl \
-        --eval_second 3"
+echo "--- 7.5 需求5: 性能评估 (在宿主机执行，TF 不依赖 Docker) ---"
+# 在宿主机执行评估（conda 环境的 TF 可用）
+cd tools/eval_scripts
+python get_gt_data.py \
+    --processed_dir ../../data/processed_scenarios_validation \
+    --output_file /tmp/mtr_verify_output/gt_data.pkl
+python eval_gt_and_pred.py \
+    --pred_file /tmp/mtr_verify_output/result.pkl \
+    --gt_file /tmp/mtr_verify_output/gt_data.pkl \
+    --eval_second 3
+cd "$MTR_DIR"
 
 echo ""
 echo "--- 7.6 需求6: 单条结果推理 (小测试集 smoke test) ---"
