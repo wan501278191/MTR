@@ -170,23 +170,10 @@ docker run --gpus all --rm --shm-size=8g \
     -v /tmp/mtr_verify_output:/mnt/output \
     --entrypoint /bin/bash \
     ${IMAGE_NAME} \
-    -c 'cd /workspace/MTR/tools && python -c "
-import time, torch
-from mtr.models.model import MotionTransformer
-from mtr.config import cfg, cfg_from_yaml_file
-cfg_from_yaml_file("cfgs/waymo/mtr_voyah_data.yaml", cfg)
-model = MotionTransformer(cfg).cuda().eval()
-model.load_params_with_optimizer("/workspace/model/best_model.pth", to_cpu=False)
-batch = {"input_dict": {"scenario_id": ["speed_test"], "obj_trajs": torch.randn(1, 64, 11, 10).cuda()}}
-torch.cuda.synchronize()
-t0 = time.time()
-for _ in range(5):
-    with torch.no_grad():
-        model(batch)
-torch.cuda.synchronize()
-t1 = time.time()
-print(f"平均推理耗时: {(t1-t0)/5*1000:.1f} ms/batch")
-"'
+    -c "cd /workspace/MTR/tools && python benchmark_speed.py \
+        --cfg_file cfgs/waymo/mtr_voyah_data.yaml \
+        --ckpt /workspace/model/best_model.pth \
+        --num_runs 5"
 
 echo ""
 echo "--- 7.5 需求5: 性能评估 (get_gt_data.py + eval_gt_and_pred.py) ---"
