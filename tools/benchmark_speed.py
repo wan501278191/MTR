@@ -4,6 +4,7 @@
     python benchmark_speed.py --cfg_file cfgs/waymo/mtr_voyah_data.yaml --ckpt /workspace/model/best_model.pth
 """
 import argparse
+import logging
 import time
 import torch
 
@@ -18,9 +19,12 @@ def main():
     parser.add_argument("--num_runs", type=int, default=10, help="推理次数")
     args = parser.parse_args()
 
+    logger = logging.getLogger("benchmark")
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
+
     cfg_from_yaml_file(args.cfg_file, cfg)
     model = MotionTransformer(config=cfg.MODEL).cuda().eval()
-    model.load_params_with_optimizer(args.ckpt, to_cpu=False)
+    model.load_params_with_optimizer(args.ckpt, to_cpu=False, logger=logger)
 
     # 构造随机输入测速
     batch_dict = {
