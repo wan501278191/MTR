@@ -24,7 +24,7 @@ COPY . /workspace/MTR
 
 # 内置模型权重
 RUN mkdir -p /workspace/model
-COPY model/best_model_ema.pth /workspace/model/best_model_ema.pth
+COPY model/best_model.pth /workspace/model/best_model.pth
 
 # 环境变量
 ENV PATH=$MTR_ENV/bin:$PATH \
@@ -37,14 +37,8 @@ WORKDIR /workspace/MTR
 # 挂载约定:
 #   /mnt/data          — 数据集根目录
 #   /mnt/output        — 推理结果输出目录
-# 容器启动即执行推理，生成 result.pkl
-CMD ["python", "tools/test.py", \
-     "--cfg_file", "cfgs/waymo/mtr_voyah_data.yaml", \
-     "--ckpt", "/workspace/model/best_model_ema.pth", \
-     "--extra_tag", "submission", \
-     "--batch_size", "32", \
-     "--workers", "8", \
-     "--save_to_file", \
-     "--set", "DATA_CONFIG.DATA_ROOT", "/mnt/data", \
-           "DATA_CONFIG.SPLIT_DIR.test", "processed_scenarios_testing_B1_part", \
-           "DATA_CONFIG.INFO_FILE.test", "processed_scenarios_testB1_part_infos.pkl"]
+# 容器启动即执行推理，生成 result.pkl 并拷贝到 /mnt/output
+COPY docker_entrypoint.sh /workspace/docker_entrypoint.sh
+RUN chmod +x /workspace/docker_entrypoint.sh
+
+CMD ["/workspace/docker_entrypoint.sh"]

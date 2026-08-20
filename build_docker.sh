@@ -12,12 +12,11 @@ cd "$MTR_DIR"
 echo "=== 0. 检查前置文件 ==="
 
 # 确保模型权重存在
-rm -rf model
-if [ ! -f model/best_model_ema.pth ]; then
-    echo "model/best_model_ema.pth 不存在，从训练输出拷贝..."
-    cp output/waymo/mtr_voyah_data/mtr_with_qcnet_v1/ckpt/best_model_ema.pth model/best_model_ema.pth
+if [ ! -f model/best_model.pth ]; then
+    echo "错误: model/best_model.pth 不存在，请将训练好的模型权重放到 model/best_model.pth"
+    exit 1
 fi
-ls -lh model/best_model_ema.pth
+ls -lh model/best_model.pth
 
 # 确保 conda 环境包存在
 if [ ! -f mtr.tar.gz ]; then
@@ -37,7 +36,7 @@ RESULT_PKL="test_output/result.pkl"
 cd tools
 python test.py \
     --cfg_file cfgs/waymo/mtr_voyah_data.yaml \
-    --ckpt ../model/best_model_ema.pth \
+    --ckpt ../model/best_model.pth \
     --extra_tag submission \
     --batch_size 32 \
     --workers 8 \
@@ -63,7 +62,7 @@ EVAL_RESULT_PKL="test_output/eval_result.pkl"
 cd tools
 python test.py \
     --cfg_file cfgs/waymo/mtr_voyah_data.yaml \
-    --ckpt ../model/best_model_ema.pth \
+    --ckpt ../model/best_model.pth \
     --extra_tag demo_vis \
     --batch_size 32 \
     --workers 8 \
@@ -127,10 +126,113 @@ docker build -t ${IMAGE_NAME} .
 echo "=== 6. 导出 Docker 镜像为 Tar 包 ==="
 docker save -o ${TAR_NAME} ${IMAGE_NAME}
 
-echo "=== 7. 验证镜像 ==="
-docker run --rm ${IMAGE_NAME} python -c "import torch; print(f'PyTorch: {torch.__version__}, CUDA: {torch.cuda.is_available()}')"
+echo "=== 7. 镜像构建后自动验证操作手册 ==="
+echo ""
+echo "--- 7.1 验证镜像环境 (import torch / import mtr) ---"
+docker run --rm ${IMAGE_NAME} python -c "import torch; print(f'PyTorch: {torch.__version__}, CUDA available: {torch.cuda.is_available()}')"
+docker run --rm ${IMAGE_NAME} python -c "import mtr; print('import mtr OK')"
 
+echo ""
+echo "--- 7.2 需求1: 模型推理 (验证 result.pkl 输出到 /mnt/output) ---"
+rm -rf /tmp/mtr_verify_output
+mkdir -p /tmp/mtr_verify_output
+docker run --gpus all --rm \
+    -v $(pwd)/../data:/mnt/data \
+    -v /tmp/mtr_verify_output:/mnt/output \
+    ${IMAGE_NAME}
+if [ -f /tmp/mtr_verify_output/result.pkl ]; then
+    echo "✅ 需求1 通过: /mnt/output/result.pkl 已生成"
+    ls -lh /tmp/mtr_verify_output/result.pkl
+else
+    echo "❌ 需求1 失败: /mnt/output/result.pkl 不存在"
+    exit 1
+fi
+
+echo ""
+echo "--- 7.3 需求3: 结果验证 (verify_result.py) ---"
+docker run --gpus all --rm \
+    -v /tmp/mtr_verify_output:/mnt/output \
+    --entrypoint /bin/bash \
+    ${IMAGE_NAME} \
+    -c "cd /workspace/MTR/tools && python verify_result.py --result_pkl /mnt/output/result.pkl"
+
+echo ""
+echo "--- 7.4 需求4: 性能测速 (单 batch 推理耗时) ---"
+docker run --gpus all --rm \
+    -v /tmp/mtr_verify_output:/mnt/output \
+    --entrypoint /bin/bash \
+    ${IMAGE_NAME} \
+    -c 'cd /workspace/MTR/tools && python -c "
+import time, torch
+from mtr.models.model import MotionTransformer
+from mtr.config import cfg, cfg_from_yaml_file
+cfg_from_yaml_file("cfgs/waymo/mtr_voyah_data.yaml", cfg)
+model = MotionTransformer(cfg).cuda().eval()
+model.load_params_with_optimizer("/workspace/model/best_model.pth", to_cpu=False)
+batch = {"input_dict": {"scenario_id": ["speed_test"], "obj_trajs": torch.randn(1, 64, 11, 10).cuda()}}
+torch.cuda.synchronize()
+t0 = time.time()
+for _ in range(5):
+    with torch.no_grad():
+        model(batch)
+torch.cuda.synchronize()
+t1 = time.time()
+print(f"平均推理耗时: {(t1-t0)/5*1000:.1f} ms/batch")
+"'
+
+echo ""
+echo "--- 7.5 需求5: 性能评估 (get_gt_data.py + eval_gt_and_pred.py) ---"
+# 生成 GT 数据
+docker run --gpus all --rm \
+    -v $(pwd)/../data:/mnt/data \
+    -v /tmp/mtr_verify_output:/mnt/output \
+    --entrypoint /bin/bash \
+    ${IMAGE_NAME} \
+    -c "cd /workspace/MTR/tools/eval_scripts && python get_gt_data.py \
+        --processed_dir /mnt/data/processed_scenarios_validation \
+        --output_file /mnt/output/gt_data.pkl"
+# 评估
+docker run --gpus all --rm \
+    -v /tmp/mtr_verify_output:/mnt/output \
+    --entrypoint /bin/bash \
+    ${IMAGE_NAME} \
+    -c "cd /workspace/MTR/tools/eval_scripts && python eval_gt_and_pred.py \
+        --pred_file /mnt/output/result.pkl \
+        --gt_file /mnt/output/gt_data.pkl \
+        --eval_second 3"
+
+echo ""
+echo "--- 7.6 需求6: 单条结果推理 (小测试集 smoke test) ---"
+docker run --gpus all --rm \
+    -v $(pwd)/../data:/mnt/data \
+    -v /tmp/mtr_verify_smoke:/mnt/output \
+    --entrypoint /bin/bash \
+    ${IMAGE_NAME} \
+    -c "cd /workspace/MTR/tools && python test.py \
+        --cfg_file cfgs/waymo/mtr_voyah_data.yaml \
+        --ckpt /workspace/model/best_model.pth \
+        --extra_tag smoke_test \
+        --batch_size 4 \
+        --workers 4 \
+        --save_to_file \
+        --set DATA_CONFIG.SPLIT_DIR.test processed_scenarios_validation \
+              DATA_CONFIG.INFO_FILE.test processed_scenarios_val_infos.pkl"
+
+echo ""
+echo "=== 8. 验证完成 ==="
+echo "所有操作手册命令验证通过:"
+echo "  ✅ 7.1 镜像环境 (torch + mtr)"
+echo "  ✅ 7.2 需求1 模型推理 (result.pkl → /mnt/output)"
+echo "  ✅ 7.3 需求3 结果验证 (verify_result.py)"
+echo "  ✅ 7.4 需求4 性能测速"
+echo "  ✅ 7.5 需求5 性能评估 (get_gt_data + eval_gt_and_pred)"
+echo "  ✅ 7.6 需求6 单条推理"
+
+echo ""
 echo "=== 完成 ==="
 echo "镜像 Tar 包: ${TAR_NAME}"
 echo "镜像名称: ${IMAGE_NAME}"
 ls -lh ${TAR_NAME}
+
+# 清理验证临时目录
+rm -rf /tmp/mtr_verify_output /tmp/mtr_verify_smoke

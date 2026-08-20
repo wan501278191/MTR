@@ -8,9 +8,10 @@ __pycache__/
 data/
 swanlog/
 *.log
-# 忽略所有 checkpoint，但保留 model/best_model_ema.pth
+build/
+# 忽略所有 checkpoint，但保留 model/best_model.pth
 *.pth
-!model/best_model_ema.pth
+!model/best_model.pth
 # output 和 test_output 目录不进镜像
 output/
 test_output/
@@ -19,3 +20,4 @@ test_output/
 *.tar.gz
 !mtr.tar.gz
 演示图片/
+*.md

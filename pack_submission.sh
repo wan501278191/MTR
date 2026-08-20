@@ -35,7 +35,7 @@ cp -v mtr_voyah_submission.tar "$SUBMIT_DIR/"
 
 # 模型权重
 echo "  [4/7] 复制模型权重..."
-cp -v model/best_model_ema.pth "$SUBMIT_DIR/model/"
+cp -v model/best_model.pth "$SUBMIT_DIR/model/"
 
 # 测试结果
 echo "  [5/7] 复制测试结果 result.pkl..."
