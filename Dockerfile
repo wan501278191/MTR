@@ -50,8 +50,12 @@ RUN TF_INT="$MTR_ENV/lib/python3.8/site-packages/tensorflow/_api/v2/__internal__
 
 WORKDIR /workspace
 
-# 拷贝算法代码（.dockerignore 已排除 mtr.tar.gz 等大文件）
-COPY . /workspace/MTR
+# 拷贝算法代码（显式列出目录，避免带入 mtr.tar.gz 等大文件）
+COPY mtr/ /workspace/MTR/mtr/
+COPY tools/ /workspace/MTR/tools/
+COPY data/ /workspace/MTR/data/
+COPY docs/ /workspace/MTR/docs/
+COPY setup.py requirements.txt LICENSE /workspace/MTR/
 
 # 内置模型权重
 RUN mkdir -p /workspace/model
