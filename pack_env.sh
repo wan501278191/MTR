@@ -37,8 +37,6 @@ rm -f "$SITE_PACKAGES/mtr_path.pth" 2>/dev/null || true
 rm -rf "$SITE_PACKAGES"/mtr*.egg* 2>/dev/null || true
 rm -rf "$SITE_PACKAGES"/MotionTransformer*.egg* 2>/dev/null || true
 rm -rf /root/wanqinghua/MTR/*.egg-info 2>/dev/null || true
-
-# 删除 MotionTransformer.egg-info
 rm -rf /root/wanqinghua/MTR/MotionTransformer.egg-info 2>/dev/null || true
 
 # === 验证无 editable 残留 ===
@@ -51,11 +49,9 @@ echo "--- easy-install.pth ---"
 cat "$SITE_PACKAGES/easy-install.pth" 2>/dev/null || echo "无 easy-install.pth"
 echo "--- mtr_path.pth ---"
 cat "$SITE_PACKAGES/mtr_path.pth" 2>/dev/null || echo "无 mtr_path.pth"
-echo "--- 所有含 MTR/mtr 路径的 .pth ---"
-grep -rl "MTR\|mtr" "$SITE_PACKAGES"/*.pth 2>/dev/null || echo "无含 MTR 的 .pth"
 
-# === 清理 conda 环境内冗余文件，大幅减小打包体积 ===
-echo "=== 清理 conda 环境缓存和冗余文件 ==="
+# === 清理缓存（仅清理缓存，不删除 conda 管理的 tests/__pycache__）===
+echo "=== 清理 conda 环境缓存 ==="
 
 # conda 包缓存
 conda clean --all -y 2>/dev/null || true
@@ -65,25 +61,21 @@ pip cache purge 2>/dev/null || true
 rm -rf "$CONDA_ENV/.cache" 2>/dev/null || true
 rm -rf "$CONDA_ENV/pkgs" 2>/dev/null || true
 
-# __pycache__ 和 .pyc
-find "$CONDA_ENV" -type d -name '__pycache__' -exec rm -rf {} + 2>/dev/null || true
-find "$CONDA_ENV" -name '*.pyc' -delete 2>/dev/null || true
-find "$CONDA_ENV" -name '*.pyo' -delete 2>/dev/null || true
+# 仅清理第三方包的 __pycache__（跳过 conda 管理的标准库和 setuptools）
+find "$SITE_PACKAGES" -type d -name '__pycache__' -not -path '*/pkg_resources/*' -exec rm -rf {} + 2>/dev/null || true
+find "$SITE_PACKAGES" -name '*.pyc' -not -path '*/pkg_resources/*' -delete 2>/dev/null || true
 
-# 测试文件和文档
-find "$SITE_PACKAGES" -type d -name 'tests' -exec rm -rf {} + 2>/dev/null || true
-find "$SITE_PACKAGES" -type d -name 'test' -exec rm -rf {} + 2>/dev/null || true
-
-# aotriton/shader caches
-rm -rf "$CONDA_ENV/lib/python3.8/site-packages/torchinductor" 2>/dev/null || true
-rm -rf "$CONDA_ENV/lib/python3.8/site-packages/triton" 2>/dev/null || true
+# aotriton/shader caches（推理不需要）
+rm -rf "$SITE_PACKAGES/torchinductor" 2>/dev/null || true
+rm -rf "$SITE_PACKAGES/triton" 2>/dev/null || true
 
 echo "清理后环境大小:"
 du -sh "$CONDA_ENV" 2>/dev/null || true
 
 # 打包 mtr 环境
+# --ignore-missing-files: 允许 __pycache__ 被删除后仍能打包
 echo "=== 打包 conda 环境 ==="
-conda pack -n mtr -o mtr.tar.gz --force
+conda pack -n mtr -o mtr.tar.gz --force --ignore-missing-files
 
 # === 恢复训练机的 mtr 可 import（不需要重新编译 CUDA 算子）===
 # 用 .pth 文件代替 setup.py develop，.so 文件已存在无需重编译
