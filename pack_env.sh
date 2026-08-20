@@ -86,3 +86,41 @@ python -c "import mtr; print('import mtr OK')" 2>/dev/null || echo "警告: impo
 
 echo "=== 完成 ==="
 ls -lh mtr.tar.gz
+
+# === 深度清理推理不需要的大包 ===
+echo "=== 深度清理推理不需要的大包 ==="
+
+# nvidia/cuda runtime 已由 base image 提供，但 conda 里可能有重复的 CUDA 库
+rm -rf "$SITE_PACKAGES/nvidia" 2>/dev/null || true
+
+# matplotlib 字体缓存（推理不需要）
+rm -rf "$SITE_PACKAGES/matplotlib/mpl-data/fonts" 2>/dev/null || true
+find "$HOME/.cache/matplotlib" -delete 2>/dev/null || true
+
+# jupyter / notebook（推理不需要）
+rm -rf "$SITE_PACKAGES/jupyter"* 2>/dev/null || true
+rm -rf "$SITE_PACKAGES/notebook" 2>/dev/null || true
+rm -rf "$SITE_PACKAGES/ipykernel" 2>/dev/null || true
+rm -rf "$SITE_PACKAGES/ipywidgets" 2>/dev/null || true
+
+# PIL/Pillow 大图资源
+find "$SITE_PACKAGES/PIL" -name "*.ttf" -delete 2>/dev/null || true
+
+# scipy 文档和测试
+find "$SITE_PACKAGES/scipy" -type d -name "tests" -exec rm -rf {} + 2>/dev/null || true
+
+# sklearn（推理不需要）
+rm -rf "$SITE_PACKAGES/sklearn" 2>/dev/null || true
+
+# tensorboard 大量日志插件（推理不需要，评估不需要）
+rm -rf "$SITE_PACKAGES/tensorboard" 2>/dev/null || true
+rm -rf "$SITE_PACKAGES/tensorboard_data_server" 2>/dev/null || true
+
+# syft / other unused
+find "$SITE_PACKAGES" -maxdepth 1 -name "*.dist-info" -type d | while read d; do
+    # 删除 dist-info 中的 RECORD 和 LICENSE（节省空间）
+    rm -f "$d/RECORD" 2>/dev/null || true
+done
+
+echo "深度清理后环境大小:"
+du -sh "$CONDA_ENV" 2>/dev/null || true

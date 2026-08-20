@@ -14,13 +14,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN mkdir -p "$MTR_ENV"
 ADD mtr.tar.gz /opt/conda/envs/mtr/
 
-# 清理解压后的环境
-RUN find "$MTR_ENV" -type d -name '__pycache__' -exec rm -rf {} + 2>/dev/null; \
-    find "$MTR_ENV" -name '*.pyc' -delete 2>/dev/null; \
-    find "$MTR_ENV" -name '*.pyo' -delete 2>/dev/null; \
-    rm -rf "$MTR_ENV/pkgs" 2>/dev/null; \
+# 清理解压后的环境（保留 __pycache__，TF 依赖编译缓存）
+RUN rm -rf "$MTR_ENV/pkgs" 2>/dev/null; \
     rm -rf "$MTR_ENV/.cache" 2>/dev/null; \
-    find "$MTR_ENV/lib/python3.8/site-packages" -type d -name 'tests' -exec rm -rf {} + 2>/dev/null; \
     rm -rf "$MTR_ENV/lib/python3.8/site-packages/triton" 2>/dev/null; \
     rm -rf "$MTR_ENV/lib/python3.8/site-packages/torchinductor" 2>/dev/null; \
     true
@@ -46,6 +42,14 @@ WORKDIR /workspace
 
 # 拷贝算法代码
 COPY . /workspace/MTR
+
+# 删除 COPY . 带入的大文件（ADD 阶段已用，不需要保留在最终镜像）
+RUN rm -rf /workspace/MTR/mtr.tar.gz \
+    /workspace/MTR/mtr_voyah_submission.tar.gz \
+    /workspace/MTR/*.tar.gz \
+    /workspace/MTR/output /workspace/MTR/test_output \
+    /workspace/MTR/swanlog /workspace/MTR/build \
+    /workspace/MTR/MotionTransformer.egg-info 2>/dev/null; true
 
 # 内置模型权重
 RUN mkdir -p /workspace/model
