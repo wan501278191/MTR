@@ -4,7 +4,7 @@
 set -ex
 
 IMAGE_NAME="mtr-voyah-submission"
-TAR_NAME="mtr_voyah_submission.tar"
+TAR_NAME="mtr_voyah_submission.tar.gz"
 MTR_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 cd "$MTR_DIR"
@@ -126,21 +126,25 @@ docker build -t ${IMAGE_NAME} .
 echo "=== 5.5 镜像大小 ==="
 docker images ${IMAGE_NAME} --format "镜像: {{.Repository}}:{{.Tag}}  大小: {{.Size}}"
 
-echo "=== 6. 导出 Docker 镜像为 Tar 包 ==="
-docker save -o ${TAR_NAME} ${IMAGE_NAME}
+echo "=== 6. 导出 Docker 镜像为 Tar 包（gzip 压缩）==="
+docker save ${IMAGE_NAME} | gzip > ${TAR_NAME}
 ls -lh ${TAR_NAME}
+echo "压缩前镜像大小:"
+docker images ${IMAGE_NAME} --format "{{.Size}}"
+echo "压缩后 tar 包大小:"
+ls -lh ${TAR_NAME} | awk '{print $5}'
 
 echo "=== 7. 镜像构建后自动验证操作手册 ==="
 echo ""
 echo "--- 7.1 验证镜像环境 (import torch / import mtr) ---"
-docker run --rm ${IMAGE_NAME} python -c "import torch; print(f'PyTorch: {torch.__version__}, CUDA available: {torch.cuda.is_available()}')"
-docker run --rm ${IMAGE_NAME} python -c "import mtr; print('import mtr OK')"
+docker run --rm --shm-size=8g ${IMAGE_NAME} python -c "import torch; print(f'PyTorch: {torch.__version__}, CUDA available: {torch.cuda.is_available()}')"
+docker run --rm --shm-size=8g ${IMAGE_NAME} python -c "import mtr; print('import mtr OK')"
 
 echo ""
 echo "--- 7.2 需求1: 模型推理 (验证 result.pkl 输出到 /mnt/output) ---"
 rm -rf /tmp/mtr_verify_output
 mkdir -p /tmp/mtr_verify_output
-docker run --gpus all --rm \
+docker run --gpus all --rm --shm-size=8g \
     -v $(pwd)/../data:/mnt/data \
     -v /tmp/mtr_verify_output:/mnt/output \
     ${IMAGE_NAME}
@@ -154,7 +158,7 @@ fi
 
 echo ""
 echo "--- 7.3 需求3: 结果验证 (verify_result.py) ---"
-docker run --gpus all --rm \
+docker run --gpus all --rm --shm-size=8g \
     -v /tmp/mtr_verify_output:/mnt/output \
     --entrypoint /bin/bash \
     ${IMAGE_NAME} \
@@ -162,7 +166,7 @@ docker run --gpus all --rm \
 
 echo ""
 echo "--- 7.4 需求4: 性能测速 (单 batch 推理耗时) ---"
-docker run --gpus all --rm \
+docker run --gpus all --rm --shm-size=8g \
     -v /tmp/mtr_verify_output:/mnt/output \
     --entrypoint /bin/bash \
     ${IMAGE_NAME} \
@@ -187,7 +191,7 @@ print(f"平均推理耗时: {(t1-t0)/5*1000:.1f} ms/batch")
 echo ""
 echo "--- 7.5 需求5: 性能评估 (get_gt_data.py + eval_gt_and_pred.py) ---"
 # 生成 GT 数据
-docker run --gpus all --rm \
+docker run --gpus all --rm --shm-size=8g \
     -v $(pwd)/../data:/mnt/data \
     -v /tmp/mtr_verify_output:/mnt/output \
     --entrypoint /bin/bash \
@@ -196,7 +200,7 @@ docker run --gpus all --rm \
         --processed_dir /mnt/data/processed_scenarios_validation \
         --output_file /mnt/output/gt_data.pkl"
 # 评估
-docker run --gpus all --rm \
+docker run --gpus all --rm --shm-size=8g \
     -v /tmp/mtr_verify_output:/mnt/output \
     --entrypoint /bin/bash \
     ${IMAGE_NAME} \
@@ -207,7 +211,7 @@ docker run --gpus all --rm \
 
 echo ""
 echo "--- 7.6 需求6: 单条结果推理 (小测试集 smoke test) ---"
-docker run --gpus all --rm \
+docker run --gpus all --rm --shm-size=8g \
     -v $(pwd)/../data:/mnt/data \
     -v /tmp/mtr_verify_smoke:/mnt/output \
     --entrypoint /bin/bash \

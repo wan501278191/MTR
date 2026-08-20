@@ -8,7 +8,7 @@ MTR_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$MTR_DIR"
 
 SUBMIT_DIR="/tmp/mtr_submission"
-SUBMIT_TAR="/tmp/mtr_voyah_submission.tar.gz"
+SUBMIT_TAR="/tmp/mtr_voyah_submission_pack.tar.gz"
 
 echo "=== 1. 准备打包目录 ==="
 rm -rf "$SUBMIT_DIR"
@@ -27,11 +27,11 @@ cp Dockerfile "$SUBMIT_DIR/"
 
 # Docker 镜像 tar 包（必须存在，不存在则报错退出）
 echo "  [3/7] 复制 Docker 镜像..."
-if [ ! -f "mtr_voyah_submission.tar" ]; then
-    echo "错误: 镜像文件 mtr_voyah_submission.tar 不存在，请先执行 build_docker.sh"
+if [ ! -f "mtr_voyah_submission.tar.gz" ]; then
+    echo "错误: 镜像文件 mtr_voyah_submission.tar.gz 不存在，请先执行 build_docker.sh"
     exit 1
 fi
-cp -v mtr_voyah_submission.tar "$SUBMIT_DIR/"
+cp -v mtr_voyah_submission.tar.gz "$SUBMIT_DIR/"
 
 # 模型权重
 echo "  [4/7] 复制模型权重..."
