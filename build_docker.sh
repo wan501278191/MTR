@@ -79,14 +79,20 @@ if [ -n "$GENERATED_EVAL" ]; then
 fi
 ls -lh "$EVAL_RESULT_PKL" 2>/dev/null || echo "警告: eval_result.pkl 不存在"
 
-# === 3. 生成演示图片（eval + test 各 3 张）===
-echo "=== 3. 生成演示图片 ==="
+# === 3. 生成演示图片 + GIF 动图（eval + test 各 3 个）===
+echo "=== 3. 生成演示图片 + GIF 动图 ==="
 cd tools
 
 # eval（验证集，有真值对比）
 if [ -f "../$EVAL_RESULT_PKL" ]; then
-    echo "生成 eval 演示图片..."
+    echo "生成 eval 静态图片 (PNG)..."
     python visualize_prediction.py \
+        --result_pkl "../$EVAL_RESULT_PKL" \
+        --data_dir ../../data/processed_scenarios_validation \
+        --output_dir ../演示图片/eval \
+        --all --max_scenarios 3 || true
+    echo "生成 eval 动图 (GIF)..."
+    python visualize_animation.py \
         --result_pkl "../$EVAL_RESULT_PKL" \
         --data_dir ../../data/processed_scenarios_validation \
         --output_dir ../演示图片/eval \
@@ -95,8 +101,14 @@ fi
 
 # test（大测试集）
 if [ -f "../$RESULT_PKL" ]; then
-    echo "生成 test 演示图片..."
+    echo "生成 test 静态图片 (PNG)..."
     python visualize_prediction.py \
+        --result_pkl "../$RESULT_PKL" \
+        --data_dir ../../data/processed_scenarios_testing_B1_part \
+        --output_dir ../演示图片/test \
+        --all --max_scenarios 3 || true
+    echo "生成 test 动图 (GIF)..."
+    python visualize_animation.py \
         --result_pkl "../$RESULT_PKL" \
         --data_dir ../../data/processed_scenarios_testing_B1_part \
         --output_dir ../演示图片/test \
@@ -105,7 +117,7 @@ fi
 
 cd "$MTR_DIR"
 echo "=== 演示图片列表 ==="
-find 演示图片 -name "*.png" -exec ls -lh {} \; 2>/dev/null || echo "警告: 未生成演示图片"
+find 演示图片 -name "*.png" -o -name "*.gif" | xargs ls -lh 2>/dev/null || echo "警告: 未生成演示图片"
 
 # === 4. 清理 Docker 并构建镜像 ===
 echo "=== 4. 清理 Docker 无用资源 ==="

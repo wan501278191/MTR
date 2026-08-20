@@ -63,6 +63,8 @@ def parse_args():
                         help='How many future seconds to animate (max 8.0s, default: 8.0)')
     parser.add_argument('--all', action='store_true', default=False,
                         help='Animate all scenarios in result.pkl')
+    parser.add_argument('--max_scenarios', type=int, default=3,
+                        help='Max number of scenarios to animate (default: 3)')
     return parser.parse_args()
 
 
@@ -271,7 +273,9 @@ def main():
 
     if args.all:
         scenario_ids = sorted(scene_preds.keys())
-        print(f'Animating all {len(scenario_ids)} scenarios...')
+        if args.max_scenarios > 0:
+            scenario_ids = scenario_ids[:args.max_scenarios]
+        print(f'Animating {len(scenario_ids)} scenarios...')
         for i, sid in enumerate(scenario_ids):
             n_objects = len(scene_preds[sid])
             for obj_idx in range(n_objects):
